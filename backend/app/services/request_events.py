@@ -1,5 +1,6 @@
 """Writers for the per-request timeline (also the future SLA event source)."""
 
+from datetime import datetime
 from typing import Any
 
 from sqlalchemy.orm import Session
@@ -7,6 +8,7 @@ from sqlalchemy.orm import Session
 from app.core.audit import sanitize
 from app.core.tenancy import Ctx
 from app.models.requests import RequestEvent, ServiceRequest
+from app.sla.engine import is_sla_event
 
 # Human-readable labels for the activity timeline.
 EVENT_LABELS = {
@@ -27,6 +29,7 @@ EVENT_LABELS = {
     "ESTIMATE_REJECTED": "Estimate rejected",
     "ESTIMATE_WITHDRAWN": "Estimate withdrawn",
     "MATERIAL_USED": "Material used",
+    "SLA_ESCALATED": "Escalated: request is overdue",
 }
 # Event types requesters never see (internal triage activity).
 STAFF_ONLY_EVENTS = frozenset(
@@ -39,6 +42,7 @@ STAFF_ONLY_EVENTS = frozenset(
         "DECLINED",
         "RESCHEDULED",
         "MATERIAL_USED",
+        "SLA_ESCALATED",
     }
 )
 
@@ -52,7 +56,11 @@ def add_event(
     from_status: str | None = None,
     to_status: str | None = None,
     data: dict[str, Any] | None = None,
+    at: datetime | None = None,
 ) -> RequestEvent:
+    """Append a timeline event. SLA-relevant events (create, priority change, estimate
+    pause/resume, complete/cancel/reopen) re-derive the request's SLA cache in the SAME
+    transaction, so no code path can forget it. ``at`` overrides the event time (seed/tests)."""
     ev = RequestEvent(
         organization_id=request.organization_id,
         request_id=request.id,
@@ -62,6 +70,12 @@ def add_event(
         to_status=to_status,
         data=sanitize(data) if data is not None else None,
     )
+    if at is not None:
+        ev.created_at = at
     db.add(ev)
     db.flush()
+    if is_sla_event(type_, to_status):
+        from app.sla.service import recompute_sla  # local import: sla.service imports models
+
+        recompute_sla(db, request)
     return ev

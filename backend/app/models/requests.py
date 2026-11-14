@@ -1,9 +1,11 @@
 import uuid
-from datetime import datetime
+from datetime import date, datetime
 from typing import Any
 
 from sqlalchemy import (
+    Boolean,
     CheckConstraint,
+    Date,
     DateTime,
     ForeignKey,
     ForeignKeyConstraint,
@@ -59,6 +61,24 @@ class ServiceRequest(UUIDPkMixin, TimestampMixin, Base):
             ["service_requests.organization_id", "service_requests.id"],
             name="fk_service_requests_duplicate_of",
         ),
+        ForeignKeyConstraint(
+            ["organization_id", "plan_id"],
+            ["maintenance_plans.organization_id", "maintenance_plans.id"],
+            name="fk_service_requests_plan",
+        ),
+        UniqueConstraint("plan_id", "occurrence_date", name="uq_service_requests_plan_occurrence"),
+        CheckConstraint(
+            "(plan_id IS NULL) = (occurrence_date IS NULL)", name="plan_occurrence_together"
+        ),
+        CheckConstraint(
+            "sla_outcome IS NULL OR sla_outcome IN ('MET', 'BREACHED')", name="sla_outcome_valid"
+        ),
+        Index(
+            "ix_service_requests_org_sla_due",
+            "organization_id",
+            "sla_due_at",
+            postgresql_where=text("sla_due_at IS NOT NULL"),
+        ),
         CheckConstraint("duplicate_of_id <> id", name="not_self_duplicate"),
         CheckConstraint(
             "preferred_window_start IS NULL OR preferred_window_end IS NULL "
@@ -100,6 +120,18 @@ class ServiceRequest(UUIDPkMixin, TimestampMixin, Base):
     status_changed_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now()
     )
+    # Preventive maintenance traceability (PM-02/03): unique (plan, occurrence).
+    plan_id: Mapped[uuid.UUID | None] = mapped_column()
+    occurrence_date: Mapped[date | None] = mapped_column(Date)
+    # SLA cache (Phase 3b), maintained by app.sla.service.recompute_sla from request_events.
+    sla_budget_minutes: Mapped[int | None] = mapped_column(Integer)
+    sla_due_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    sla_at_risk_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    sla_paused: Mapped[bool] = mapped_column(Boolean, default=False, server_default="false")
+    sla_consumed_minutes: Mapped[int | None] = mapped_column(Integer)  # frozen at stop
+    sla_outcome: Mapped[str | None] = mapped_column(String(10))  # MET | BREACHED
+    sla_stopped_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    overdue_notified_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
 
 class RequestEvent(UUIDPkMixin, Base):

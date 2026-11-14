@@ -25,7 +25,9 @@ from app.models import (
     CategoryRequiredSkill,
     Estimate,
     EstimateLine,
+    Holiday,
     InventoryItem,
+    MaintenancePlan,
     MaterialUsage,
     Membership,
     MembershipRole,
@@ -50,9 +52,11 @@ from app.models.enums import (
     NoteKind,
     NoteVisibility,
     Priority,
+    Recurrence,
     RequestStatus,
     StockMovementKind,
 )
+from app.sla.service import recompute_all
 
 DEMO_PASSWORD = "demo1234"  # noqa: S105 - disposable demo credential, documented
 NAMESPACE = uuid.UUID("6f1f2c4e-8f0b-4a53-9c63-0f1f0c5e11a0")
@@ -113,6 +117,55 @@ INVENTORY = (
     ("SEALANT-SIL", "Silicone sealant tube", "tube", "2", "3", 9500),  # race demo item
     ("THERMOSTAT-DGT", "Digital thermostat", "pcs", "5", "2", 95000),
 )
+# (key, asset code suffix, category, title, priority, recurrence, first_date offset in days from
+# the first seed run, enabled). Org -> plans. SEED-03: some already due, one disabled.
+PLANS = {
+    "northwind": (
+        (
+            "hvac-weekly",
+            "P1-01",
+            "HVAC",
+            "Weekly rooftop AC filter check",
+            Priority.NORMAL,
+            Recurrence.WEEKLY,
+            -14,
+            True,
+        ),
+        (
+            "boiler-monthly",
+            "P2-02",
+            "General maintenance",
+            "Monthly boiler safety inspection",
+            Priority.HIGH,
+            Recurrence.MONTHLY,
+            10,
+            True,
+        ),
+    ),
+    "alatoo": (
+        (
+            "hvac-monthly",
+            "P1-01",
+            "HVAC",
+            "Monthly chiller service",
+            Priority.NORMAL,
+            Recurrence.MONTHLY,
+            -5,
+            True,
+        ),
+        (
+            "boiler-weekly-off",
+            "P2-02",
+            "General maintenance",
+            "Weekly boiler pressure log",
+            Priority.LOW,
+            Recurrence.WEEKLY,
+            -30,
+            False,
+        ),
+    ),
+}
+
 # request key -> technician key -> (item code, quantity): seeded material usage
 USAGE = {
     "i": ("technician3", (("FILTER-HVAC-M", "2"),)),
@@ -312,6 +365,7 @@ class Seeder:
         self.seed_inventory(org, spec, members)
         self.seed_estimates(org, spec, members)
         self.seed_notifications(org, spec, members)
+        self.seed_sla(org, spec, members)
 
     def seed_requests(
         self, org: Organization, spec: OrgSpec, members: dict[str, Membership]
@@ -1070,7 +1124,71 @@ class Seeder:
             )
         self.db.flush()
 
-    def _new_request(self, org, spec, requester, rid, pidx, cat, title, prio) -> ServiceRequest:
+    def seed_sla(self, org: Organization, spec: OrgSpec, members: dict[str, Membership]) -> None:
+        """SLA-01 holiday, SEED-02 overdue job (not yet escalated) and SEED-03 plans.
+
+        Dates are anchored to the local date of the FIRST seed run (rows are skipped on re-runs)."""
+        tz = ZoneInfo(org.timezone)
+        today = datetime.now(tz).date()
+        holiday_id = uid("holiday", spec.key)
+        if self.db.get(Holiday, holiday_id) is None:
+            self.db.add(
+                Holiday(
+                    id=holiday_id,
+                    organization_id=org.id,
+                    date=today + timedelta(days=45),
+                    name="Demo public holiday",
+                )
+            )
+            self.db.flush()
+
+        rid = uid("request", spec.key, "overdue")
+        if self.db.get(ServiceRequest, rid) is None:
+            # HIGH = 8 business hours; created 3 business days ago at 09:00 local -> long overdue.
+            d, back = today, 3
+            while back:
+                d -= timedelta(days=1)
+                if d.weekday() < 5:
+                    back -= 1
+            created = datetime.combine(d, time(9, 0), tzinfo=tz).astimezone(UTC)
+            req = self._new_request(
+                org,
+                spec,
+                members["requester1"],
+                rid,
+                0,
+                "HVAC",
+                "Server room cooling failed (overdue demo)",
+                Priority.HIGH,
+                at=created,
+            )
+            req.asset_id = uid("asset", spec.key, f"{spec.key[:2].upper()}-P1-01")
+            self.db.flush()
+
+        for key, asset_suffix, cat, title, prio, rec, offset, enabled in PLANS[spec.key]:
+            pid = uid("plan", spec.key, key)
+            if self.db.get(MaintenancePlan, pid) is not None:
+                continue
+            self.db.add(
+                MaintenancePlan(
+                    id=pid,
+                    organization_id=org.id,
+                    asset_id=uid("asset", spec.key, f"{spec.key[:2].upper()}-{asset_suffix}"),
+                    category_id=uid("cat", spec.key, cat),
+                    title=title,
+                    description="Routine preventive maintenance as per the manufacturer schedule.",
+                    priority=prio,
+                    first_date=today + timedelta(days=offset),
+                    recurrence=rec,
+                    is_enabled=enabled,
+                    created_by_membership_id=members["admin"].id,
+                )
+            )
+        self.db.flush()
+
+    def _new_request(
+        self, org, spec, requester, rid, pidx, cat, title, prio, at=None
+    ) -> ServiceRequest:
         number = self.db.execute(
             text(
                 "UPDATE organizations SET request_seq = request_seq + 1 "
@@ -1100,13 +1218,15 @@ class Seeder:
             "REQUEST_CREATED",
             None,
             RequestStatus.SUBMITTED,
-            {"number": number},
+            {"number": number, "priority": prio.value},
+            at=at,
         )
         return req
 
-    def _event(self, org, req, actor, type_, frm, to, data) -> None:
+    def _event(self, org, req, actor, type_, frm, to, data, at=None) -> None:
         self.db.add(
             RequestEvent(
+                **({"created_at": at} if at is not None else {}),
                 organization_id=org.id,
                 request_id=req.id,
                 type=type_,
@@ -1146,6 +1266,7 @@ def seed(db: Session) -> list[tuple[str, str, str]]:
     shared = s.user(SHARED_EMAIL, "Shared Demo User")
     for spec in ORGS:
         s.seed_org(spec, shared)
+    recompute_all(db)  # SLA cache of every seeded request, derived from its events
     db.commit()
     return s.credentials
 

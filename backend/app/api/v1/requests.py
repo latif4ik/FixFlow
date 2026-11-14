@@ -31,7 +31,8 @@ from app.services import requests as svc
 router = APIRouter(tags=["requests"])
 files_router = APIRouter(tags=["files"])
 
-Sort = Literal["newest", "oldest", "priority"]
+Sort = Literal["newest", "oldest", "priority", "due"]
+SlaFilter = Literal["ON_TRACK", "AT_RISK", "OVERDUE", "PAUSED"]
 
 
 @router.post("/requests", response_model=RequestDetail, status_code=201)
@@ -54,6 +55,10 @@ def list_requests(
     created_from: datetime | None = None,
     created_to: datetime | None = None,
     sort: Sort = "newest",
+    sla_state: Annotated[
+        list[SlaFilter] | None,
+        Query(description="Live SLA state (finished requests are excluded)."),
+    ] = None,
     technician_id: Annotated[
         uuid.UUID | None,
         Query(description="Requests currently assigned (or completed) by this technician."),
@@ -73,6 +78,7 @@ def list_requests(
         created_to=created_to,
         sort=sort,
         technician_id=technician_id,
+        sla_states=sla_state,
     )
     return make_page(items, total, params)
 

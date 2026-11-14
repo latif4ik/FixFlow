@@ -7,6 +7,7 @@ from app.models.enums import AssetStatus, MembershipRole
 from app.models.estimates import Estimate, EstimateLine
 from app.models.identity import Membership, Organization, SecurityEvent, Session, User
 from app.models.inventory import InventoryItem, MaterialUsage, StockMovement
+from app.models.maintenance import MaintenancePlan
 from app.models.notifications import Notification
 from app.models.org import (
     BusinessHour,
@@ -34,6 +35,7 @@ __all__ = [
     "Holiday",
     "IdempotencyKey",
     "InventoryItem",
+    "MaintenancePlan",
     "MaterialUsage",
     "Membership",
     "MembershipRole",

@@ -15,6 +15,7 @@ from app.core.errors import NotFound, ValidationFailed
 from app.core.tenancy import Ctx, get_or_404, scoped
 from app.models.identity import Organization
 from app.models.org import BusinessHour, Holiday
+from app.sla.service import recompute_org_open_requests
 
 
 def check_no_overlap(intervals: Sequence[tuple[int, time, time]], field: str = "intervals") -> None:
@@ -48,6 +49,8 @@ def update_org(db: Session, ctx: Ctx, data: dict[str, Any]) -> Organization:
     after = org_snapshot(org)
     if before != after:
         record_audit(db, ctx, "org.updated", "organization", org.id, before, after)
+        if before["timezone"] != after["timezone"]:
+            recompute_org_open_requests(db, ctx.org_id)  # SLA-01: the calendar changed
     return org
 
 
@@ -83,6 +86,7 @@ def replace_business_hours(
         {"intervals": before},
         {"intervals": _hours_dump(rows)},
     )
+    recompute_org_open_requests(db, ctx.org_id)  # SLA-01: due instants follow the new hours
     return rows
 
 
@@ -93,6 +97,7 @@ def create_holiday(db: Session, ctx: Ctx, data: dict[str, Any]) -> Holiday:
     record_audit(
         db, ctx, "holiday.created", "holiday", h.id, None, {"date": h.date, "name": h.name}
     )
+    recompute_org_open_requests(db, ctx.org_id)
     return h
 
 
@@ -102,3 +107,4 @@ def delete_holiday(db: Session, ctx: Ctx, holiday_id: uuid.UUID) -> None:
     db.delete(h)
     db.flush()
     record_audit(db, ctx, "holiday.deleted", "holiday", holiday_id, before, None)
+    recompute_org_open_requests(db, ctx.org_id)

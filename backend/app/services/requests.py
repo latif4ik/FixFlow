@@ -2,12 +2,15 @@
 
 import re
 import uuid
+from collections.abc import Sequence
+from dataclasses import asdict
 from datetime import datetime
 from typing import Any
 
 from sqlalchemy import Select, case, or_, select, text
 from sqlalchemy.orm import Session
 
+from app.core import clock
 from app.core.audit import record_audit
 from app.core.errors import Conflict, Forbidden, NotFound, ValidationFailed
 from app.core.pagination import PageParams, paginate_rows
@@ -31,6 +34,7 @@ from app.schemas.requests import (
     PropertyBrief,
     RequestDetail,
     RequestListItem,
+    SlaOut,
     TimelineItem,
 )
 from app.services import lifecycle
@@ -43,6 +47,7 @@ from app.services.request_access import (
 )
 from app.services.request_events import EVENT_LABELS, STAFF_ONLY_EVENTS, add_event
 from app.services.util import like_pattern
+from app.sla import service as sla_svc
 
 R = MembershipRole
 NUMBER_RE = re.compile(r"^(?:REQ-)?(\d{1,9})$", re.IGNORECASE)
@@ -183,7 +188,14 @@ def _create(db: Session, ctx: Ctx, data: dict[str, Any]) -> ServiceRequest:
         "priority": req.priority.value,
         "requester_membership_id": requester_id,
     }
-    add_event(db, ctx, req, "REQUEST_CREATED", to_status=req.status.value, data={"number": number})
+    add_event(
+        db,
+        ctx,
+        req,
+        "REQUEST_CREATED",
+        to_status=req.status.value,
+        data={"number": number, "priority": req.priority.value},
+    )
     record_audit(db, ctx, "request.create", "service_request", req.id, after=snapshot)
     return req
 
@@ -338,8 +350,46 @@ def list_requests(
     created_to: datetime | None,
     sort: str,
     technician_id: uuid.UUID | None = None,
+    sla_states: Sequence[str] | None = None,
 ) -> tuple[list[RequestListItem], int]:
-    # TODO(Phase 3): SLA state filters and the "due" sort need SLA.
+    rows, total = list_requests_with_rows(
+        db,
+        ctx,
+        params,
+        statuses=statuses,
+        priorities=priorities,
+        category_id=category_id,
+        property_id=property_id,
+        asset_id=asset_id,
+        q=q,
+        created_from=created_from,
+        created_to=created_to,
+        sort=sort,
+        technician_id=technician_id,
+        sla_states=sla_states,
+    )
+    return [item for item, _ in rows], total
+
+
+def list_requests_with_rows(
+    db: Session,
+    ctx: Ctx,
+    params: PageParams,
+    *,
+    statuses: list[RequestStatus] | None = None,
+    priorities: list[Priority] | None = None,
+    category_id: uuid.UUID | None = None,
+    property_id: uuid.UUID | None = None,
+    asset_id: uuid.UUID | None = None,
+    q: str | None = None,
+    created_from: datetime | None = None,
+    created_to: datetime | None = None,
+    sort: str = "newest",
+    technician_id: uuid.UUID | None = None,
+    sla_states: Sequence[str] | None = None,
+    now: datetime | None = None,
+) -> tuple[list[tuple[RequestListItem, ServiceRequest]], int]:
+    now = now or clock.now()
     stmt = _list_base(ctx)
     if technician_id:
         stmt = stmt.where(
@@ -351,6 +401,8 @@ def list_requests(
                 )
             )
         )
+    if sla_states:
+        stmt = stmt.where(or_(*(sla_svc.state_clause(st, now) for st in sla_states)))
     if statuses:
         stmt = stmt.where(ServiceRequest.status.in_(statuses))
     if priorities:
@@ -382,9 +434,15 @@ def list_requests(
         "newest": (ServiceRequest.created_at.desc(), ServiceRequest.id),
         "oldest": (ServiceRequest.created_at.asc(), ServiceRequest.id),
         "priority": (PRIORITY_RANK, ServiceRequest.created_at.desc(), ServiceRequest.id),
+        # REQ-04: earliest SLA due instant first; paused / finished requests (no due) last.
+        "due": (
+            ServiceRequest.sla_due_at.asc().nulls_last(),
+            ServiceRequest.created_at.asc(),
+            ServiceRequest.id,
+        ),
     }[sort]
     rows, total = paginate_rows(db, stmt.order_by(*order), params)
-    return [_list_item(*r) for r in rows], total
+    return [(_list_item(*r, now=now), r[0]) for r in rows], total
 
 
 def _list_base(ctx: Ctx) -> Any:
@@ -425,6 +483,7 @@ def _list_item(
     cat: ServiceCategory,
     asset: Asset | None,
     requester_name: str | None,
+    now: datetime | None = None,
 ) -> RequestListItem:
     return RequestListItem(
         id=req.id,
@@ -443,6 +502,10 @@ def _list_item(
         ),
         created_at=req.created_at,
         updated_at=req.updated_at,
+        sla_state=sla_svc.cached_state(req, now or clock.now()),
+        sla_due_at=req.sla_due_at,
+        plan_id=req.plan_id,
+        occurrence_date=req.occurrence_date,
     )
 
 
@@ -590,6 +653,7 @@ def get_detail(db: Session, ctx: Ctx, request_id: uuid.UUID) -> RequestDetail:
     from app.services.notes import notes_stmt
 
     req = get_visible_request(db, ctx, request_id)
+    now = clock.now()
     prop = db.get(Property, req.property_id)
     cat = db.get(ServiceCategory, req.category_id)
     if prop is None or cat is None:  # impossible given composite FKs
@@ -617,6 +681,7 @@ def get_detail(db: Session, ctx: Ctx, request_id: uuid.UUID) -> RequestDetail:
         cat,
         asset,
         names.get(req.requester_membership_id) if req.requester_membership_id else None,
+        now,
     )
     assignment = _current_assignment(db, ctx, req)
     return RequestDetail(
@@ -642,5 +707,6 @@ def get_detail(db: Session, ctx: Ctx, request_id: uuid.UUID) -> RequestDetail:
         timeline=build_timeline(db, ctx, events),
         allowed_actions=lifecycle.allowed_actions(db, ctx, req),
         estimate=estimates_svc.current_summary(db, ctx, req),
+        sla=SlaOut(**asdict(sla_svc.live_state(db, req, now))),
         materials=(inventory_svc.list_usage(db, ctx, req.id) if ctx.role != R.REQUESTER else []),
     )

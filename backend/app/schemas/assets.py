@@ -3,8 +3,8 @@ from datetime import date, datetime
 
 from pydantic import BaseModel, Field
 
-from app.models.enums import AssetStatus
-from app.schemas.common import Timestamps
+from app.models.enums import AssetStatus, Priority, RequestStatus
+from app.schemas.common import PersonBrief, Qty3Out, Timestamps
 from app.schemas.org import OrgName
 
 
@@ -73,3 +73,67 @@ class AssetOut(Timestamps):
     installed_on: date | None
     status: AssetStatus
     notes: str | None
+
+
+# ---- asset detail / history (ASSET-04/05) ----
+class WorkBrief(BaseModel):
+    id: uuid.UUID
+    display_id: str
+    title: str
+    status: RequestStatus
+    priority: Priority
+    created_at: datetime
+    sla_state: str | None = None
+    sla_due_at: datetime | None = None
+
+
+class LastServiceOut(BaseModel):
+    request: WorkBrief
+    completed_at: datetime
+    technician: PersonBrief | None
+
+
+class NextMaintenanceOut(BaseModel):
+    plan_id: uuid.UUID
+    title: str
+    date: date
+
+
+class AssetDetail(AssetOut):
+    open_work: list[WorkBrief]
+    last_completed_service: LastServiceOut | None
+    next_maintenance: NextMaintenanceOut | None  # staff only
+
+
+class MaterialLine(BaseModel):
+    item_id: uuid.UUID
+    name: str
+    unit: str
+    quantity: Qty3Out
+    total_cost_minor: int
+
+
+class MaterialSummary(BaseModel):
+    items: list[MaterialLine]
+    total_cost_minor: int
+
+
+class OutcomeOut(BaseModel):
+    status: RequestStatus
+    sla_outcome: str | None  # MET | BREACHED once completed / canceled
+
+
+class AssetHistoryItem(BaseModel):
+    request_id: uuid.UUID
+    display_id: str
+    title: str
+    status: RequestStatus
+    priority: Priority
+    created_at: datetime
+    completed_at: datetime | None  # service date
+    technician: PersonBrief | None
+    outcome: OutcomeOut
+    materials: MaterialSummary
+    attachment_count: int
+    plan_id: uuid.UUID | None = None
+    occurrence_date: date | None = None

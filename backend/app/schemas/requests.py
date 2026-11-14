@@ -1,5 +1,5 @@
 import uuid
-from datetime import datetime
+from datetime import date, datetime
 from typing import Annotated, Any
 
 from pydantic import AwareDatetime, BaseModel, Field, StringConstraints, model_validator
@@ -108,6 +108,22 @@ class CategoryBrief(ORMModel):
     name: str
 
 
+class SlaOut(BaseModel):
+    """SLA-04: due instant, remaining / overdue time and the indicator."""
+
+    budget_minutes: int
+    consumed_minutes: int
+    remaining_minutes: int  # negative while overdue
+    overdue_by_minutes: int
+    due_at: datetime | None  # null while paused, after completion/cancellation
+    at_risk_at: datetime | None
+    paused: bool
+    stopped: bool
+    stopped_at: datetime | None
+    state: str  # ON_TRACK | AT_RISK | OVERDUE (stopped: the state at completion/cancellation)
+    outcome: str | None  # MET | BREACHED once completed or canceled
+
+
 class RequestListItem(BaseModel):
     id: uuid.UUID
     number: int
@@ -121,6 +137,11 @@ class RequestListItem(BaseModel):
     requester: PersonBrief | None
     created_at: datetime
     updated_at: datetime
+    # ON_TRACK | AT_RISK | OVERDUE | PAUSED (finished requests: their state at the stop instant)
+    sla_state: str | None = None
+    sla_due_at: datetime | None = None
+    plan_id: uuid.UUID | None = None
+    occurrence_date: date | None = None
 
 
 class FileOut(BaseModel):
@@ -205,6 +226,5 @@ class RequestDetail(RequestListItem):
     appointment: AppointmentBrief | None = None
     # Current estimate (caller-visible) and recorded material usage (staff / technicians).
     estimate: EstimateSummary | None = None
-    # Placeholder until Phase 3b (SLA).
-    sla: None = None
+    sla: SlaOut | None = None
     materials: list[UsageOut] = Field(default_factory=list)

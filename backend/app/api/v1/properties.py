@@ -10,6 +10,8 @@ from app.models.enums import AssetStatus
 from app.schemas.assets import (
     AccessGrantIn,
     AccessOut,
+    AssetDetail,
+    AssetHistoryItem,
     AssetIn,
     AssetOut,
     AssetPatch,
@@ -17,6 +19,7 @@ from app.schemas.assets import (
     PropertyOut,
     PropertyPatch,
 )
+from app.services import asset_history as asset_history_svc
 from app.services import properties as svc
 
 router = APIRouter(tags=["properties"])
@@ -114,9 +117,15 @@ def create_asset(body: AssetIn, db: DbDep, ctx: StaffCtx) -> Asset:
     return asset
 
 
-@assets_router.get("/assets/{asset_id}", response_model=AssetOut)
-def get_asset(asset_id: uuid.UUID, db: DbDep, ctx: CurrentCtx) -> Asset:
-    return svc.get_asset(db, ctx, asset_id)
+@assets_router.get("/assets/{asset_id}", response_model=AssetDetail)
+def get_asset(asset_id: uuid.UUID, db: DbDep, ctx: CurrentCtx) -> AssetDetail:
+    return asset_history_svc.asset_detail(db, ctx, svc.get_asset(db, ctx, asset_id))
+
+
+@assets_router.get("/assets/{asset_id}/history", response_model=Page[AssetHistoryItem])
+def asset_history(asset_id: uuid.UUID, db: DbDep, ctx: StaffCtx, params: Pagination) -> dict:
+    items, total = asset_history_svc.asset_history(db, ctx, asset_id, params)
+    return make_page(items, total, params)
 
 
 @assets_router.patch("/assets/{asset_id}", response_model=AssetOut)

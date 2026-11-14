@@ -76,3 +76,8 @@ class StockMovementKind(StrEnum):
     ADDITION = "ADDITION"
     CONSUMPTION = "CONSUMPTION"
     ADJUSTMENT = "ADJUSTMENT"
+
+
+class Recurrence(StrEnum):
+    WEEKLY = "WEEKLY"
+    MONTHLY = "MONTHLY"

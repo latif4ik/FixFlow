@@ -8,10 +8,12 @@ from app.api.v1 import (
     estimates,
     health,
     inventory,
+    maintenance,
     notifications,
     org,
     properties,
     requests,
+    sla,
     technicians,
 )
 
@@ -30,3 +32,5 @@ api_router.include_router(assignments.router)
 api_router.include_router(estimates.router)
 api_router.include_router(notifications.router)
 api_router.include_router(inventory.router)
+api_router.include_router(sla.router)
+api_router.include_router(maintenance.router)

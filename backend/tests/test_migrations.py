@@ -164,3 +164,44 @@ def test_downgrade_to_0004_and_upgrade_again(migrated_db: str, db_engine) -> Non
             == 4
         )
     test_models_match_migrations(migrated_db, db_engine)
+
+
+def test_downgrade_to_0005_and_upgrade_again(migrated_db: str, db_engine) -> None:
+    from alembic import command
+
+    cfg = _alembic_cfg(migrated_db)
+    db_engine.dispose()
+    command.downgrade(cfg, "0005_estimates_inventory")
+    with db_engine.connect() as conn:
+        assert conn.execute(text("SELECT to_regclass('public.maintenance_plans')")).scalar() is None
+        cols = set(
+            conn.execute(
+                text(
+                    "SELECT column_name FROM information_schema.columns "
+                    "WHERE table_name = 'service_requests'"
+                )
+            ).scalars()
+        )
+        assert not cols & {"plan_id", "occurrence_date", "sla_due_at", "overdue_notified_at"}
+        assert conn.execute(text("SELECT to_regclass('public.estimates')")).scalar()
+    command.upgrade(cfg, "head")
+    with db_engine.connect() as conn:
+        assert conn.execute(text("SELECT to_regclass('public.maintenance_plans')")).scalar()
+        assert (
+            conn.execute(
+                text(
+                    "SELECT count(*) FROM pg_constraint "
+                    "WHERE conname = 'uq_service_requests_plan_occurrence'"
+                )
+            ).scalar()
+            == 1
+        )
+        assert (
+            conn.execute(
+                text(
+                    "SELECT count(*) FROM pg_indexes "
+                    "WHERE indexname = 'ix_service_requests_org_sla_due'"
+                )
+            ).scalar()
+            == 1
+        )

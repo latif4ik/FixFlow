@@ -10,7 +10,9 @@ Extension points for later phases (add a subparser + handler for each):
 import argparse
 import sys
 import time
+import uuid
 from collections.abc import Callable
+from datetime import UTC, date, datetime
 
 from sqlalchemy import text
 
@@ -82,6 +84,53 @@ def _cmd_seed(_: argparse.Namespace) -> int:
     return 0
 
 
+def _parse_now(value: str) -> datetime:
+    dt = datetime.fromisoformat(value)
+    return dt if dt.tzinfo else dt.replace(tzinfo=UTC)
+
+
+def _cmd_sla_escalate(args: argparse.Namespace) -> int:
+    from app.db.session import SessionLocal, get_engine
+    from app.services.escalation import escalate_overdue
+
+    get_engine()
+    with SessionLocal() as db:
+        count = escalate_overdue(db, args.now)
+    print(count)
+    return 0
+
+
+def _cmd_sla_recompute(_: argparse.Namespace) -> int:
+    from app.db.session import SessionLocal, get_engine
+    from app.sla.service import recompute_all
+
+    get_engine()
+    with SessionLocal() as db:
+        n = recompute_all(db)
+        db.commit()
+    print(n)
+    return 0
+
+
+def _cmd_generate_maintenance(args: argparse.Namespace) -> int:
+    from app.db.session import SessionLocal, get_engine
+    from app.services.maintenance import generate
+
+    get_engine()
+    with SessionLocal() as db:
+        report = generate(db, args.org, args.as_of, commit_each=True)
+    for plan in report.plans:
+        for item in plan.created:
+            print(
+                f"created {item.display_id} plan={plan.plan_id} occurrence={item.occurrence_date}"
+            )
+    print(
+        f"as_of={report.as_of} plans={report.plans_processed} created={report.requests_created} "
+        f"skipped_existing={report.skipped_existing} errors={report.errors}"
+    )
+    return 1 if report.errors else 0
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="python -m app.cli", description="FixFlow CLI")
     sub = parser.add_subparsers(dest="command", required=True)
@@ -91,6 +140,21 @@ def build_parser() -> argparse.ArgumentParser:
     sub.add_parser("check-db", help="single connectivity check").set_defaults(func=_cmd_check_db)
     sub.add_parser("seed", help="load deterministic demo data (idempotent)").set_defaults(
         func=_cmd_seed
+    )
+    esc = sub.add_parser(
+        "sla-escalate", help="notify staff about newly overdue requests (idempotent); prints count"
+    )
+    esc.add_argument("--now", type=_parse_now, default=None, help="ISO-8601 instant (default: now)")
+    esc.set_defaults(func=_cmd_sla_escalate)
+    gen = sub.add_parser(
+        "generate-maintenance",
+        help="create requests for maintenance occurrences due on or before --as-of (idempotent)",
+    )
+    gen.add_argument("--as-of", type=date.fromisoformat, required=True, help="YYYY-MM-DD")
+    gen.add_argument("--org", type=uuid.UUID, default=None, help="limit to one organization id")
+    gen.set_defaults(func=_cmd_generate_maintenance)
+    sub.add_parser("sla-recompute", help="re-derive the SLA cache of every request").set_defaults(
+        func=_cmd_sla_recompute
     )
     return parser
 

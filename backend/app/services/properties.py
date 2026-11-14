@@ -277,4 +277,8 @@ def update_asset(db: Session, ctx: Ctx, asset_id: uuid.UUID, data: dict[str, Any
         if before["status"] != after["status"] and after["status"] == AssetStatus.RETIRED:
             action = "asset.retired"
         record_audit(db, ctx, action, "asset", asset.id, before, after)
+        if action == "asset.retired":
+            from app.services.maintenance import disable_plans_for_retired_asset
+
+            disable_plans_for_retired_asset(db, ctx, asset.id)
     return asset

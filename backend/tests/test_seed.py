@@ -27,7 +27,7 @@ def test_seed_is_idempotent_and_usable(client, db, db_engine):
     assert first["organizations"] == 2 and first["properties"] == 6 and first["assets"] == 12
     assert first["users"] == 15 and first["memberships"] == 16 and first["service_categories"] == 8
     assert first["audit_events"] == 0
-    assert first["service_requests"] == 28 and first["work_notes"] == 14 + 2 * 12
+    assert first["service_requests"] == 30 and first["work_notes"] == 14 + 2 * 12
     assert first["request_events"] > 12
     # the shared user has different roles in different orgs
     r = client.post(
@@ -55,7 +55,7 @@ def test_seeded_requests_visible_per_role(client, db):
     org = r.json()["memberships"][0]["organization"]["id"]
     hd = {**h(r.json()["token"]), "X-Org-Id": org}
     page = client.get("/api/v1/requests?page_size=50", headers=hd).json()
-    assert page["total"] == 14
+    assert page["total"] == 15
     assert {i["status"] for i in page["items"]} == {
         "SUBMITTED",
         "TRIAGED",
@@ -219,3 +219,40 @@ def test_seeded_estimates_inventory_notifications(client, db, db_engine):
     # notifications: seeded unread + the new approval for the dispatcher
     unread = client.get("/api/v1/notifications/unread-count", headers=disp).json()["unread"]
     assert unread >= 3
+
+
+def test_seed_sla_and_maintenance_demo_data(client, db, db_engine):
+    seed(db)
+    c = _counts(db_engine)
+    assert c["maintenance_plans"] == 4 and c["holidays"] == 2
+    r = client.post(
+        "/api/v1/auth/login", json={"email": "dispatcher@northwind.demo", "password": "demo1234"}
+    )
+    org = r.json()["memberships"][0]["organization"]["id"]
+    hd = {**h(r.json()["token"]), "X-Org-Id": org}
+    over = client.get("/api/v1/requests?sla_state=OVERDUE", headers=hd).json()
+    assert over["total"] == 1 and "overdue demo" in over["items"][0]["title"]
+    q = client.get("/api/v1/dashboard/overdue", headers=hd).json()
+    assert q["count"] == 1 and q["items"][0]["escalated_at"] is None
+    plans = client.get("/api/v1/maintenance-plans", headers=hd).json()
+    assert plans["total"] == 2 and all(p["next_occurrence"] for p in plans["items"])
+    due = next(p for p in plans["items"] if p["recurrence"] == "WEEKLY")
+    assert due["last_generated_for"] is None  # nothing generated yet: occurrences are already due
+    # every seeded request has an SLA cache; finished ones keep their outcome
+    with db_engine.connect() as conn:
+        missing = conn.execute(
+            text("SELECT count(*) FROM service_requests WHERE sla_budget_minutes IS NULL")
+        ).scalar()
+        stopped = conn.execute(
+            text("SELECT count(*) FROM service_requests WHERE sla_stopped_at IS NOT NULL")
+        ).scalar()
+        assert (
+            conn.execute(
+                text(
+                    "SELECT count(*) FROM service_requests WHERE sla_stopped_at IS NOT NULL "
+                    "AND sla_outcome IS NULL"
+                )
+            ).scalar()
+            == 0
+        )
+    assert missing == 0 and stopped > 0
