@@ -27,10 +27,12 @@ from app.schemas.assignments import (
     UnassignIn,
 )
 from app.schemas.requests import RequestDetail, RequiredReasonIn
+from app.schemas.suggestions import SuggestionsOut
 from app.services import assignments as svc
 from app.services import eligibility, lifecycle
 from app.services import requests as requests_svc
 from app.services import schedule as schedule_svc
+from app.services import suggestions as suggest_svc
 from app.services.request_access import get_visible_request
 
 router = APIRouter(tags=["assignments"])
@@ -80,6 +82,38 @@ def candidates(
         )
     req = get_visible_request(db, ctx, request_id)
     return eligibility.candidates(db, ctx, req, start_at, end_at)
+
+
+@router.get("/requests/{request_id}/suggestions", response_model=SuggestionsOut)
+def suggestions(
+    request_id: uuid.UUID,
+    db: DbDep,
+    ctx: StaffCtx,
+    horizon_days: Annotated[int, Query(ge=1, le=31)] = 14,
+    duration_minutes: Annotated[int | None, Query(ge=30, le=720)] = None,
+    limit: Annotated[int, Query(ge=1, le=20)] = 5,
+) -> dict[str, Any]:
+    """Smart Assign: earliest free slots of skilled, active technicians (staff only).
+
+    The request must be TRIAGED, or SCHEDULED/ACCEPTED (reschedule mode: its own current
+    assignment does not block). ``duration_minutes`` (30..720, multiple of 15) defaults to the
+    category's default duration. Slots are on a 15-minute grid, inside one availability interval,
+    clear of time off and active assignments (adjacency is allowed); at most 2 non-overlapping
+    suggestions per technician, ranked by start, then workload, then name.
+
+    Suggestions are ADVISORY and not reserved: assigning still goes through
+    ``POST``/``PUT /requests/{id}/assignment`` with all guards, so a stale suggestion yields the
+    normal 409 (schedule_conflict) or 422 (technician_ineligible) there; refresh and retry.
+    """
+    if duration_minutes is not None and duration_minutes % 15:
+        raise AppError(
+            422,
+            "validation_error",
+            "duration_minutes must be a multiple of 15.",
+            [{"field": "duration_minutes", "message": "must be a multiple of 15"}],
+        )
+    req = get_visible_request(db, ctx, request_id)
+    return suggest_svc.suggest(db, ctx, req, horizon_days, duration_minutes, limit)
 
 
 @router.post("/requests/{request_id}/assignment", response_model=AssignmentResult, status_code=201)

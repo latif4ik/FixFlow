@@ -181,6 +181,8 @@ def allowed_actions(db: Session, ctx: Ctx, request: ServiceRequest) -> list[str]
         actions.remove("start")  # EST-04: hidden while the estimate gate is closed
     if is_staff(ctx) and request.status in (S.SCHEDULED, S.ACCEPTED):
         actions.append("reschedule")  # same guard as "unassign": before work begins
+    if is_staff(ctx) and request.status in (S.TRIAGED, S.SCHEDULED, S.ACCEPTED):
+        actions.append("suggest_assignment")  # Smart Assign (WEB-09)
     if request.status not in TERMINAL:
         actions.append("add_note")
         if is_staff(ctx):
