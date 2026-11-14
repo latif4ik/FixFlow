@@ -78,7 +78,7 @@ def test_downgrade_to_0002_and_upgrade_again(migrated_db: str, db_engine) -> Non
         n = conn.execute(
             text("SELECT count(*) FROM pg_trigger WHERE tgname LIKE 'trg_%_immutable'")
         ).scalar()
-        assert n == 3
+        assert n == 7  # audit, events, notes + Phase 3a: estimates, lines, usage, movements
 
 
 def test_downgrade_to_0003_and_upgrade_again(migrated_db: str, db_engine) -> None:
@@ -125,4 +125,42 @@ def test_downgrade_to_0003_and_upgrade_again(migrated_db: str, db_engine) -> Non
             == 1
         )
     # drift check stays clean after the round trip
+    test_models_match_migrations(migrated_db, db_engine)
+
+
+def test_downgrade_to_0004_and_upgrade_again(migrated_db: str, db_engine) -> None:
+    from alembic import command
+
+    cfg = _alembic_cfg(migrated_db)
+    db_engine.dispose()
+    command.downgrade(cfg, "0004_assignments")
+    with db_engine.connect() as conn:
+        for t in (
+            "estimates",
+            "estimate_lines",
+            "inventory_items",
+            "material_usage",
+            "stock_movements",
+            "notifications",
+        ):
+            assert conn.execute(text(f"SELECT to_regclass('public.{t}')")).scalar() is None
+        assert conn.execute(text("SELECT to_regclass('public.assignments')")).scalar()
+        assert (
+            conn.execute(
+                text("SELECT count(*) FROM pg_proc WHERE proname LIKE 'estimate%guard_immutable'")
+            ).scalar()
+            == 0
+        )
+    command.upgrade(cfg, "head")
+    with db_engine.connect() as conn:
+        assert (
+            conn.execute(
+                text(
+                    "SELECT count(*) FROM pg_trigger WHERE tgname IN "
+                    "('trg_estimates_immutable','trg_estimate_lines_immutable',"
+                    "'trg_material_usage_immutable','trg_stock_movements_immutable')"
+                )
+            ).scalar()
+            == 4
+        )
     test_models_match_migrations(migrated_db, db_engine)

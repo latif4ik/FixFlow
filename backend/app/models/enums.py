@@ -62,3 +62,17 @@ class AssignmentStatus(StrEnum):
     UNASSIGNED = "UNASSIGNED"
     RESCHEDULED = "RESCHEDULED"
     CANCELED = "CANCELED"
+
+
+class EstimateStatus(StrEnum):
+    DRAFT = "DRAFT"
+    AWAITING_APPROVAL = "AWAITING_APPROVAL"
+    APPROVED = "APPROVED"
+    REJECTED = "REJECTED"
+    SUPERSEDED = "SUPERSEDED"
+
+
+class StockMovementKind(StrEnum):
+    ADDITION = "ADDITION"
+    CONSUMPTION = "CONSUMPTION"
+    ADJUSTMENT = "ADJUSTMENT"

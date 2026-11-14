@@ -22,6 +22,11 @@ EVENT_LABELS = {
     "UNASSIGNED": "Technician unassigned",
     "DECLINED": "Technician declined the job",
     "RESCHEDULED": "Appointment rescheduled",
+    "ESTIMATE_SUBMITTED": "Estimate submitted for approval",
+    "ESTIMATE_APPROVED": "Estimate approved",
+    "ESTIMATE_REJECTED": "Estimate rejected",
+    "ESTIMATE_WITHDRAWN": "Estimate withdrawn",
+    "MATERIAL_USED": "Material used",
 }
 # Event types requesters never see (internal triage activity).
 STAFF_ONLY_EVENTS = frozenset(
@@ -33,6 +38,7 @@ STAFF_ONLY_EVENTS = frozenset(
         "UNASSIGNED",
         "DECLINED",
         "RESCHEDULED",
+        "MATERIAL_USED",
     }
 )
 

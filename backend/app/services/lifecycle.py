@@ -19,6 +19,7 @@ from app.core.errors import AppError, Forbidden, ValidationFailed
 from app.core.tenancy import Ctx
 from app.models.enums import AssignmentStatus, FilePurpose, NoteKind, NoteVisibility, RequestStatus
 from app.models.requests import EvidenceFile, ServiceRequest
+from app.services import estimate_gate, notifications
 from app.services.assignment_rows import release_active
 from app.services.notes import add_note_row
 from app.services.request_access import (
@@ -68,7 +69,14 @@ def _completion_guard(db: Session, ctx: Ctx, request: ServiceRequest, text: str)
             "A completion image is required.",
             [{"field": "completion_images", "message": "Upload at least one completion image."}],
         )
-    validate_materials_for_completion(db, request)  # HOOK (Phase 3)
+    validate_materials_for_completion(db, request)
+
+
+def _estimate_gate_guard(db: Session, ctx: Ctx, request: ServiceRequest, text: str) -> None:
+    """EST-04: with a submitted estimate, work starts only once the current one is APPROVED."""
+    blocker = estimate_gate.start_blocker(db, request)
+    if blocker is not None:
+        raise estimate_gate.gate_error(blocker)
 
 
 _TRIAGE_RULE = Rule(
@@ -100,7 +108,9 @@ TRANSITIONS: dict[tuple[RequestStatus, RequestStatus], tuple[Rule, ...]] = {
         ),
         Rule("staff", "unassign", True, internal=True, note_visibility=NoteVisibility.INTERNAL),
     ),
-    (S.ACCEPTED, S.IN_PROGRESS): (Rule("assigned_technician", "start"),),  # Phase 3: estimate gate
+    (S.ACCEPTED, S.IN_PROGRESS): (
+        Rule("assigned_technician", "start", guards=(_estimate_gate_guard,)),
+    ),
     (S.IN_PROGRESS, S.BLOCKED): (
         Rule("assigned_technician", "block", True, note_kind=NoteKind.BLOCKER),
     ),
@@ -167,6 +177,8 @@ def allowed_actions(db: Session, ctx: Ctx, request: ServiceRequest) -> list[str]
                 if rule.action not in actions:
                     actions.append(rule.action)
                 break
+    if "start" in actions and estimate_gate.start_blocker(db, request) is not None:
+        actions.remove("start")  # EST-04: hidden while the estimate gate is closed
     if is_staff(ctx) and request.status in (S.SCHEDULED, S.ACCEPTED):
         actions.append("reschedule")  # same guard as "unassign": before work begins
     if request.status not in TERMINAL:
@@ -286,7 +298,7 @@ def _transition(
     data: dict[str, Any] = {"action": rule.action, **(extra or {})}
     if note_id is not None:
         data.update(note_id=note_id, note_visibility=rule.note_visibility.value)
-    add_event(
+    event = add_event(
         db, ctx, request, "STATUS_CHANGED", from_status=frm.value, to_status=to.value, data=data
     )
     record_audit(
@@ -298,4 +310,39 @@ def _transition(
         before={"status": frm.value},
         after={"status": to.value, "action": rule.action, "note_id": note_id},
     )
+    _notify_status(db, ctx, request, to, event.id)
     return request
+
+
+def _notify_status(
+    db: Session, ctx: Ctx, request: ServiceRequest, to: RequestStatus, event_id: uuid.UUID
+) -> None:
+    """COMM-03: job completion -> requester + staff; rework request -> staff (actor excluded)."""
+    ref = f"#{request.number} {request.title}"
+    data = {"status": to.value}
+    if to == S.COMPLETED:
+        notifications.notify(
+            db,
+            ctx.org_id,
+            [request.requester_membership_id, *notifications.staff_recipients(db, ctx.org_id)],
+            notifications.JOB_COMPLETED,
+            "Job completed",
+            f"Work on request {ref} was completed.",
+            request_id=request.id,
+            data=data,
+            dedupe_key=f"job-completed:{event_id}",
+            exclude=ctx.membership_id,
+        )
+    elif to == S.REOPENED:
+        notifications.notify(
+            db,
+            ctx.org_id,
+            notifications.staff_recipients(db, ctx.org_id),
+            notifications.REWORK_REQUESTED,
+            "Rework requested",
+            f"The requester reopened request {ref} for rework.",
+            request_id=request.id,
+            data=data,
+            dedupe_key=f"rework:{event_id}",
+            exclude=ctx.membership_id,
+        )

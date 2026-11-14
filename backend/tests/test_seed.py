@@ -154,3 +154,68 @@ def test_seeded_assignments_and_collision_candidate(client, db, db_engine):
     # org isolation: Ala-Too dispatcher cannot see the Northwind request
     at = _login(client, "dispatcher@alatoo.demo")
     assert client.get(f"/api/v1/requests/{collision['id']}", headers=at).status_code == 404
+
+
+def test_seeded_estimates_inventory_notifications(client, db, db_engine):
+    seed(db)
+    first = _counts(db_engine)
+    seed(db)
+    assert _counts(db_engine) == first  # re-run adds nothing
+    assert first["inventory_items"] == 20 and first["material_usage"] == 10
+    assert first["estimates"] == 10 and first["estimate_lines"] == 2 * (2 + 2 + 1 + 2 + 1)
+    assert first["notifications"] == 16
+    assert first["stock_movements"] == 20 + 10  # initial ADDITION per item + 1 per usage
+    # stock agrees with the ledger everywhere (SEED consistency)
+    bad = db.execute(
+        text(
+            "SELECT count(*) FROM inventory_items i WHERE i.stock_quantity <> "
+            "(SELECT COALESCE(sum(delta), 0) FROM stock_movements m WHERE m.item_id = i.id)"
+        )
+    ).scalar()
+    assert bad == 0
+    # totals were computed server-side style: total = labor + materials, KGS
+    bad = db.execute(
+        text(
+            "SELECT count(*) FROM estimates e WHERE e.total_minor <> e.labor_cost_minor + "
+            "e.materials_total_minor OR e.materials_total_minor <> (SELECT COALESCE("
+            "sum(line_total_minor), 0) FROM estimate_lines l WHERE l.estimate_id = e.id) "
+            "OR e.currency <> 'KGS'"
+        )
+    ).scalar()
+    assert bad == 0
+    statuses = db.execute(
+        text("SELECT status, count(*) FROM estimates GROUP BY 1 ORDER BY 1")
+    ).all()
+    assert dict(statuses) == {"APPROVED": 4, "AWAITING_APPROVAL": 2, "DRAFT": 2, "SUPERSEDED": 2}
+
+    # low-stock list is non-empty for each org's dispatcher; race-demo item has 2 units
+    disp = _login(client, "dispatcher@northwind.demo")
+    low = client.get("/api/v1/inventory/low-stock", headers=disp).json()
+    assert {i["code"] for i in low} == {"LED-BULB-12W", "SEALANT-SIL"}
+    assert next(i for i in low if i["code"] == "SEALANT-SIL")["stock_quantity"] == "2.000"
+    assert client.get(
+        "/api/v1/inventory/low-stock", headers=_login(client, "admin@alatoo.demo")
+    ).json()
+
+    # the EST-04 demo: technician2's ACCEPTED job has a pending estimate => start blocked
+    t2 = _login(client, "technician2@northwind.demo")
+    items = client.get("/api/v1/me/assignments?scope=upcoming", headers=t2).json()["items"]
+    job = next(i for i in items if i["request"]["status"] == "ACCEPTED")
+    assert job["estimate_status"] == "AWAITING_APPROVAL" and "start" not in job["allowed_actions"]
+    r = client.post(f"/api/v1/requests/{job['request']['id']}/start", headers=t2)
+    assert r.status_code == 409 and r.json()["error"]["code"] == "estimate_not_approved"
+    # the owning requester approves, then the technician can start
+    r1 = _login(client, "requester1@northwind.demo")
+    est = client.get(f"/api/v1/requests/{job['request']['id']}/estimates", headers=r1).json()[0]
+    ok = client.post(
+        f"/api/v1/estimates/{est['id']}/decision",
+        json={"version": est["version"], "decision": "APPROVE"},
+        headers=r1,
+    )
+    assert ok.status_code == 200
+    assert (
+        client.post(f"/api/v1/requests/{job['request']['id']}/start", headers=t2).status_code == 200
+    )
+    # notifications: seeded unread + the new approval for the dispatcher
+    unread = client.get("/api/v1/notifications/unread-count", headers=disp).json()["unread"]
+    assert unread >= 3

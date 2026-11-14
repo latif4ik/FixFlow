@@ -5,7 +5,10 @@ from app.api.v1 import (
     audit,
     auth,
     catalog,
+    estimates,
     health,
+    inventory,
+    notifications,
     org,
     properties,
     requests,
@@ -24,3 +27,6 @@ api_router.include_router(audit.router)
 api_router.include_router(requests.router)
 api_router.include_router(requests.files_router)
 api_router.include_router(assignments.router)
+api_router.include_router(estimates.router)
+api_router.include_router(notifications.router)
+api_router.include_router(inventory.router)

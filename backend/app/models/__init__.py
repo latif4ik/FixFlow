@@ -4,7 +4,10 @@ from app.models.assets import Asset, Property, PropertyAccess
 from app.models.assignments import Assignment, IdempotencyKey
 from app.models.audit import AuditEvent
 from app.models.enums import AssetStatus, MembershipRole
+from app.models.estimates import Estimate, EstimateLine
 from app.models.identity import Membership, Organization, SecurityEvent, Session, User
+from app.models.inventory import InventoryItem, MaterialUsage, StockMovement
+from app.models.notifications import Notification
 from app.models.org import (
     BusinessHour,
     CategoryRequiredSkill,
@@ -25,11 +28,16 @@ __all__ = [
     "AuditEvent",
     "BusinessHour",
     "CategoryRequiredSkill",
+    "Estimate",
+    "EstimateLine",
     "EvidenceFile",
     "Holiday",
     "IdempotencyKey",
+    "InventoryItem",
+    "MaterialUsage",
     "Membership",
     "MembershipRole",
+    "Notification",
     "Organization",
     "Property",
     "PropertyAccess",
@@ -39,6 +47,7 @@ __all__ = [
     "ServiceRequest",
     "Session",
     "Skill",
+    "StockMovement",
     "TechnicianAvailability",
     "TechnicianProfile",
     "TechnicianSkill",

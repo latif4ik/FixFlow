@@ -29,7 +29,7 @@ from app.models.identity import Membership, User
 from app.models.requests import ServiceRequest
 from app.schemas.assignments import AssignmentOut
 from app.schemas.requests import PersonBrief
-from app.services import eligibility, lifecycle
+from app.services import eligibility, lifecycle, notifications
 from app.services.assignment_rows import new_assignment, release_active
 from app.services.request_access import (
     get_active_assignment,
@@ -197,6 +197,27 @@ def _insert(
         raise _conflict(exc, tech_id, start, end) from exc
 
 
+def _tell_technician(
+    db: Session, ctx: Ctx, req: ServiceRequest, a: Assignment, type_: str, title: str, what: str
+) -> None:
+    notifications.notify(
+        db,
+        ctx.org_id,
+        [a.technician_membership_id],
+        type_,
+        title,
+        f"Request #{req.number} {req.title} {what} ({a.start_at.isoformat()}).",
+        request_id=req.id,
+        data={
+            "assignment_id": a.id,
+            "start_at": a.start_at.isoformat(),
+            "end_at": a.end_at.isoformat(),
+        },
+        dedupe_key=f"{type_.lower()}:{a.id}",
+        exclude=ctx.membership_id,
+    )
+
+
 # ---- staff commands --------------------------------------------------------------------
 def assign(
     db: Session,
@@ -215,7 +236,9 @@ def assign(
     _require_eligible(db, ctx, req, tech_id, start, end)
     a = _insert(db, ctx, req, tech_id, start, end)
     _log(db, ctx, req, "ASSIGNED", a)
-    # HOOK (Phase 3): notify the technician "assignment created" here.
+    _tell_technician(
+        db, ctx, req, a, notifications.ASSIGNMENT_CREATED, "New job assigned", "was assigned to you"
+    )
     lifecycle.apply_transition(
         db, ctx, req.id, S.SCHEDULED, internal=True, extra={"assignment_id": a.id}
     )
@@ -249,6 +272,25 @@ def reschedule(
         db, ctx, req.id, S.TRIAGED, reason=text, internal=True, extra={"reschedule": True}
     )
     _log(db, ctx, req, "RESCHEDULED", new, reason, {"previous": old_snapshot})
+    if old.technician_membership_id != new.technician_membership_id:
+        _tell_technician(
+            db,
+            ctx,
+            req,
+            old,
+            notifications.ASSIGNMENT_REMOVED,
+            "Job reassigned",
+            "was reassigned to another technician",
+        )
+    _tell_technician(
+        db,
+        ctx,
+        req,
+        new,
+        notifications.ASSIGNMENT_RESCHEDULED,
+        "Job rescheduled",
+        "was scheduled for you at a new time",
+    )
     lifecycle.apply_transition(
         db, ctx, req.id, S.SCHEDULED, internal=True, extra={"assignment_id": new.id}
     )
@@ -269,6 +311,15 @@ def unassign(
     if a is None:  # lifecycle guarantees an active row here; fail loudly otherwise
         raise Conflict("No active assignment to release.")
     _log(db, ctx, req, "UNASSIGNED", a, reason)
+    _tell_technician(
+        db,
+        ctx,
+        req,
+        a,
+        notifications.ASSIGNMENT_REMOVED,
+        "Job unassigned",
+        "was taken off your schedule",
+    )
     return a, req
 
 
@@ -288,7 +339,18 @@ def decline(
     if a is None:  # lifecycle guarantees an active row here; fail loudly otherwise
         raise Conflict("No active assignment to release.")
     _log(db, ctx, req, "DECLINED", a, reason)
-    # HOOK (Phase 3): notify dispatchers "assignment declined" here.
+    notifications.notify(
+        db,
+        ctx.org_id,
+        notifications.staff_recipients(db, ctx.org_id),
+        notifications.ASSIGNMENT_DECLINED,
+        "Technician declined a job",
+        f"The technician declined request #{req.number} {req.title}: {reason}",
+        request_id=req.id,
+        data={"assignment_id": a.id, "technician_membership_id": a.technician_membership_id},
+        dedupe_key=f"assignment-declined:{a.id}",
+        exclude=ctx.membership_id,
+    )
     return a, req
 
 

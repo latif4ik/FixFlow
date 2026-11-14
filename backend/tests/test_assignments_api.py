@@ -483,7 +483,10 @@ def test_me_assignments_scopes_and_payload(client, db, sw, hd):
         "appointment",
         "assignment_status",
         "allowed_actions",
+        "estimate_status",
+        "start_blocked_reason",
     }
+    assert item["estimate_status"] is None and item["start_blocked_reason"] is None
     rq = item["request"]
     assert rq["display_id"].startswith("REQ-") and rq["property"]["address"] == "1 Test St"
     assert set(rq["property"]) == {"name", "address", "contact_instructions"}

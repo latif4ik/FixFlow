@@ -13,7 +13,7 @@ from app.core.pagination import PageParams, paginate_rows
 from app.core.tenancy import Ctx
 from app.models.assets import Asset, Property
 from app.models.assignments import Assignment
-from app.models.enums import AssignmentStatus, MembershipRole, RequestStatus
+from app.models.enums import AssignmentStatus, EstimateStatus, MembershipRole, RequestStatus
 from app.models.identity import Membership, User
 from app.models.org import ServiceCategory, TechnicianAvailability, TechnicianTimeOff
 from app.models.requests import ServiceRequest
@@ -31,7 +31,7 @@ from app.schemas.assignments import (
     ScheduleTechnician,
     ScheduleTimeOff,
 )
-from app.services import eligibility, lifecycle
+from app.services import eligibility, estimate_gate, lifecycle
 from app.services.requests import display_id
 
 S = RequestStatus
@@ -91,6 +91,14 @@ def my_assignments(
     rows, total = paginate_rows(db, stmt, params)
     items = []
     for a, req, prop, cat, asset, requester_name in rows:
+        cur = estimate_gate.current_estimate(db, req.organization_id, req.id)
+        blocked = (
+            estimate_gate.blocked_reason(cur)
+            if cur is not None
+            and req.status == S.ACCEPTED
+            and cur.status != EstimateStatus.APPROVED
+            else None
+        )
         items.append(
             MyAssignmentItem(
                 assignment_id=a.id,
@@ -121,6 +129,8 @@ def my_assignments(
                 appointment=AppointmentBrief(start_at=a.start_at, end_at=a.end_at),
                 assignment_status=a.status,
                 allowed_actions=lifecycle.allowed_actions(db, ctx, req),
+                estimate_status=cur.status if cur is not None else None,
+                start_blocked_reason=blocked,
             )
         )
     return items, total

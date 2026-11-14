@@ -2,6 +2,7 @@
 
 import uuid
 from datetime import date, datetime, time
+from decimal import Decimal
 from enum import Enum
 from typing import Any
 
@@ -23,7 +24,7 @@ def sanitize(value: Any) -> Any:
         return [sanitize(v) for v in value]
     if isinstance(value, Enum):
         return value.value
-    if isinstance(value, uuid.UUID):
+    if isinstance(value, uuid.UUID | Decimal):
         return str(value)
     if isinstance(value, datetime | date | time):
         return value.isoformat()

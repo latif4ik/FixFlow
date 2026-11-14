@@ -8,12 +8,14 @@ string below; never use this in production.
 import uuid
 from dataclasses import dataclass
 from datetime import UTC, date, datetime, time, timedelta
+from decimal import Decimal
 from typing import Any
 from zoneinfo import ZoneInfo
 
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
+from app.core import money
 from app.core.audit import sanitize
 from app.core.security import hash_password
 from app.models import (
@@ -21,8 +23,13 @@ from app.models import (
     Assignment,
     BusinessHour,
     CategoryRequiredSkill,
+    Estimate,
+    EstimateLine,
+    InventoryItem,
+    MaterialUsage,
     Membership,
     MembershipRole,
+    Notification,
     Organization,
     Property,
     PropertyAccess,
@@ -30,13 +37,22 @@ from app.models import (
     ServiceCategory,
     ServiceRequest,
     Skill,
+    StockMovement,
     TechnicianAvailability,
     TechnicianProfile,
     TechnicianSkill,
     User,
     WorkNote,
 )
-from app.models.enums import AssignmentStatus, NoteKind, NoteVisibility, Priority, RequestStatus
+from app.models.enums import (
+    AssignmentStatus,
+    EstimateStatus,
+    NoteKind,
+    NoteVisibility,
+    Priority,
+    RequestStatus,
+    StockMovementKind,
+)
 
 DEMO_PASSWORD = "demo1234"  # noqa: S105 - disposable demo credential, documented
 NAMESPACE = uuid.UUID("6f1f2c4e-8f0b-4a53-9c63-0f1f0c5e11a0")
@@ -83,6 +99,26 @@ ORGS = (
         {0: ("requester1", "requester2"), 1: ("requester1",), 2: ("requester2",)},
     ),
 )
+
+# (code, name, unit, final stock, reorder threshold, unit price in tyiyn)
+INVENTORY = (
+    ("PIPE-CU-15", "Copper pipe 15 mm", "m", "48", "20", 45000),
+    ("VALVE-BALL-15", 'Ball valve 1/2"', "pcs", "14", "5", 38000),
+    ("FILTER-HVAC-M", "Chiller air filter (M)", "pcs", "6", "4", 125000),
+    ("BREAKER-16A", "Circuit breaker 16 A", "pcs", "22", "8", 21000),
+    ("SOCKET-16A", "Wall socket 16 A", "pcs", "34", "10", 8500),
+    ("CABLE-2.5", "Copper cable 2.5 mm2", "m", "293.5", "100", 6200),
+    ("LED-BULB-12W", "LED bulb 12 W", "pcs", "3", "12", 4500),  # low stock
+    ("HINGE-HD", "Heavy-duty door hinge", "pcs", "8", "4", 12000),
+    ("SEALANT-SIL", "Silicone sealant tube", "tube", "2", "3", 9500),  # race demo item
+    ("THERMOSTAT-DGT", "Digital thermostat", "pcs", "5", "2", 95000),
+)
+# request key -> technician key -> (item code, quantity): seeded material usage
+USAGE = {
+    "i": ("technician3", (("FILTER-HVAC-M", "2"),)),
+    "k": ("technician1", (("SOCKET-16A", "1"), ("CABLE-2.5", "6.5"))),
+    "l": ("technician2", (("VALVE-BALL-15", "1"), ("SEALANT-SIL", "1"))),
+}
 
 SKILLS = ("electrical", "plumbing", "hvac", "general")
 CATEGORIES = (
@@ -273,6 +309,9 @@ class Seeder:
                 )
         self.seed_requests(org, spec, members)
         self.seed_jobs(org, spec, members)
+        self.seed_inventory(org, spec, members)
+        self.seed_estimates(org, spec, members)
+        self.seed_notifications(org, spec, members)
 
     def seed_requests(
         self, org: Organization, spec: OrgSpec, members: dict[str, Membership]
@@ -652,6 +691,384 @@ class Seeder:
             )
             req.status = RequestStatus.TRIAGED
             self.db.flush()
+
+    # ---- inventory + material usage (Phase 3a) ------------------------------------------
+    def seed_inventory(
+        self, org: Organization, spec: OrgSpec, members: dict[str, Membership]
+    ) -> None:
+        """10 items per org. The ledger starts with an ADDITION of (final stock + seeded usage)
+        and one CONSUMPTION per usage row, so stock and movements always agree."""
+        from app.services.inventory import _usage_hash
+
+        admin = members["admin"]
+        used: dict[str, Decimal] = {}
+        for _, (_, lines) in USAGE.items():
+            for code, qty in lines:
+                used[code] = used.get(code, Decimal(0)) + Decimal(qty)
+        items: dict[str, InventoryItem] = {}
+        for code, name, unit, final, threshold, price in INVENTORY:
+            iid = uid("item", spec.key, code)
+            item = self.db.get(InventoryItem, iid)
+            if item is None:
+                initial = Decimal(final) + used.get(code, Decimal(0))
+                item = InventoryItem(
+                    id=iid,
+                    organization_id=org.id,
+                    code=code,
+                    name=name,
+                    unit=unit,
+                    stock_quantity=Decimal(final),
+                    reorder_threshold=Decimal(threshold),
+                    unit_price_minor=price,
+                )
+                self.db.add(item)
+                self.db.flush()
+                self._movement(
+                    org,
+                    item,
+                    StockMovementKind.ADDITION,
+                    initial,
+                    "Initial stock (seed)",
+                    admin,
+                    initial,
+                    uid("mv", spec.key, code, "initial"),
+                )
+            items[code] = item
+        for rkey, (tech_key, lines) in USAGE.items():
+            req_id = uid("request", spec.key, rkey)
+            if self.db.get(ServiceRequest, req_id) is None:
+                continue
+            tech = members[tech_key]
+            for code, qty_s in lines:
+                cmd = uid("usage", spec.key, rkey, code)
+                if self.db.scalar(text("SELECT 1 FROM material_usage WHERE id = :i"), {"i": cmd}):
+                    continue
+                item, qty = items[code], Decimal(qty_s)
+                total = money.line_total_minor(qty, item.unit_price_minor)
+                self.db.add(
+                    MaterialUsage(
+                        id=cmd,
+                        organization_id=org.id,
+                        request_id=req_id,
+                        item_id=item.id,
+                        technician_membership_id=tech.id,
+                        quantity=qty,
+                        unit_cost_minor_snapshot=item.unit_price_minor,
+                        total_cost_minor=total,
+                        client_command_id=cmd,
+                        payload_hash=_usage_hash(req_id, item.id, qty),
+                    )
+                )
+                self.db.flush()
+                # initial stock included this usage, so the ledger running balance is exact
+                running = self._balance(item.id) - qty
+                self._movement(
+                    org,
+                    item,
+                    StockMovementKind.CONSUMPTION,
+                    -qty,
+                    "Used on a seeded job",
+                    tech,
+                    running,
+                    uid("mv", spec.key, rkey, code),
+                    cmd,
+                )
+
+    def _balance(self, item_id: uuid.UUID) -> Decimal:
+        return self.db.execute(
+            text("SELECT COALESCE(sum(delta), 0) FROM stock_movements WHERE item_id = :i"),
+            {"i": item_id},
+        ).scalar_one()
+
+    def _movement(self, org, item, kind, delta, reason, actor, after, mid, usage_id=None) -> None:
+        self.db.add(
+            StockMovement(
+                id=mid,
+                organization_id=org.id,
+                item_id=item.id,
+                kind=kind,
+                delta=delta,
+                reason=reason,
+                actor_membership_id=actor.id,
+                material_usage_id=usage_id,
+                stock_after=after,
+            )
+        )
+        self.db.flush()
+
+    # ---- estimates (Phase 3a) -------------------------------------------------------------
+    def _estimate(
+        self,
+        org: Organization,
+        spec: OrgSpec,
+        members: dict[str, Membership],
+        req_key: str,
+        version: int,
+        final: EstimateStatus,
+        labor_minutes: int,
+        rate: int,
+        lines: tuple[tuple[str, str, int], ...],
+        supersedes: Estimate | None = None,
+        notes: str | None = None,
+        reason: str | None = None,
+    ) -> Estimate | None:
+        """Insert one estimate version (DRAFT first so its lines can be written, then moved to
+        ``final`` via status-only updates) with totals computed by the money helpers."""
+        eid = uid("estimate", spec.key, req_key, str(version))
+        if self.db.get(Estimate, eid) is not None:
+            return None
+        req = self.db.get(ServiceRequest, uid("request", spec.key, req_key))
+        if req is None:
+            return None
+        disp, req1 = members["dispatcher"], members["requester1"]
+        labor = money.labor_cost_minor(labor_minutes, rate)
+        line_rows = [(d, Decimal(q), p, money.line_total_minor(Decimal(q), p)) for d, q, p in lines]
+        materials = sum(r[3] for r in line_rows)
+        now = datetime.now(UTC)
+        est = Estimate(
+            id=eid,
+            organization_id=org.id,
+            request_id=req.id,
+            version=version,
+            status=EstimateStatus.DRAFT,
+            supersedes_id=supersedes.id if supersedes else None,
+            labor_minutes=labor_minutes,
+            labor_rate_minor=rate,
+            labor_cost_minor=labor,
+            materials_total_minor=materials,
+            total_minor=labor + materials,
+            currency=money.CURRENCY,
+            notes=notes,
+            created_by_membership_id=disp.id,
+        )
+        self.db.add(est)
+        self.db.flush()
+        for pos, (d, q, p, t) in enumerate(line_rows, start=1):
+            self.db.add(
+                EstimateLine(
+                    organization_id=org.id,
+                    estimate_id=eid,
+                    position=pos,
+                    description=d,
+                    quantity=q,
+                    unit_price_minor=p,
+                    line_total_minor=t,
+                )
+            )
+        self.db.flush()
+        if final != EstimateStatus.DRAFT:
+            est.submitted_at, est.submitted_by_membership_id = now, disp.id
+            data = {
+                "estimate_id": str(eid),
+                "version": version,
+                "total_minor": est.total_minor,
+                "superseded": [],
+            }
+            est.status = EstimateStatus.AWAITING_APPROVAL
+            self.db.flush()
+            self._event(org, req, disp, "ESTIMATE_SUBMITTED", None, None, data)
+            if final in (
+                EstimateStatus.APPROVED,
+                EstimateStatus.REJECTED,
+                EstimateStatus.SUPERSEDED,
+            ):
+                # SUPERSEDED here means "rejected, then replaced by the next version"
+                decided = (
+                    EstimateStatus.APPROVED
+                    if final == EstimateStatus.APPROVED
+                    else EstimateStatus.REJECTED
+                )
+                est.status = decided
+                est.decided_at, est.decided_by_membership_id = now, req1.id
+                est.decision_reason = reason
+                self.db.flush()
+                self._event(
+                    org,
+                    req,
+                    req1,
+                    f"ESTIMATE_{decided.value}",
+                    None,
+                    None,
+                    {"estimate_id": str(eid), "version": version, "reason": reason},
+                )
+            if final == EstimateStatus.SUPERSEDED:
+                est.status = EstimateStatus.SUPERSEDED
+            self.db.flush()
+        return est
+
+    def seed_estimates(
+        self, org: Organization, spec: OrgSpec, members: dict[str, Membership]
+    ) -> None:
+        ES = EstimateStatus
+        # c (TRIAGED): a DRAFT being prepared
+        self._estimate(
+            org,
+            spec,
+            members,
+            "c",
+            1,
+            ES.DRAFT,
+            60,
+            50000,
+            (("Ballast", "2", 7800), ("Wire", "3.5", 6200)),
+            notes="Draft, not yet sent.",
+        )
+        # h (ACCEPTED): AWAITING_APPROVAL, so the technician's "start" is blocked (EST-04 demo)
+        self._estimate(
+            org,
+            spec,
+            members,
+            "h",
+            1,
+            ES.AWAITING_APPROVAL,
+            90,
+            50000,
+            (("Tap cartridge", "1", 24500), ("Sealing tape", "2", 1950)),
+            notes="Includes replacing the cartridge.",
+        )
+        # i (IN_PROGRESS): APPROVED
+        self._estimate(
+            org,
+            spec,
+            members,
+            "i",
+            1,
+            ES.APPROVED,
+            120,
+            55000,
+            (("Chiller air filter (M)", "2", 125000),),
+        )
+        # j (BLOCKED): v1 rejected and replaced by an approved v2
+        v1 = self._estimate(
+            org,
+            spec,
+            members,
+            "j",
+            1,
+            ES.SUPERSEDED,
+            120,
+            60000,
+            (("Hinge set", "2", 12000), ("Door closer", "1", 48000)),
+            reason="Too expensive; please reduce the scope.",
+        )
+        self._estimate(
+            org,
+            spec,
+            members,
+            "j",
+            2,
+            ES.APPROVED,
+            60,
+            60000,
+            (("Hinge set", "2", 12000),),
+            supersedes=v1,
+            notes="Scope reduced after v1.",
+        )
+        self.db.flush()
+
+    # ---- notifications (Phase 3a) ---------------------------------------------------------
+    def seed_notifications(
+        self, org: Organization, spec: OrgSpec, members: dict[str, Membership]
+    ) -> None:
+        def req_of(key: str) -> ServiceRequest | None:
+            return self.db.get(ServiceRequest, uid("request", spec.key, key))
+
+        now = datetime.now(UTC)
+        # (key, recipient, type, title, body, request key, read?)
+        rows = (
+            (
+                "assigned-h",
+                "technician2",
+                "ASSIGNMENT_CREATED",
+                "New job assigned",
+                "Fix dripping tap in the kitchen was assigned to you.",
+                "h",
+                False,
+            ),
+            (
+                "assigned-g",
+                "technician1",
+                "ASSIGNMENT_CREATED",
+                "New job assigned",
+                "Replace burnt-out corridor lights was assigned to you.",
+                "g",
+                True,
+            ),
+            (
+                "est-h",
+                "requester1",
+                "ESTIMATE_SUBMITTED",
+                "Estimate awaiting your approval",
+                "Estimate v1 for 'Fix dripping tap in the kitchen' needs your decision.",
+                "h",
+                False,
+            ),
+            (
+                "done-k-req",
+                "requester1",
+                "JOB_COMPLETED",
+                "Job completed",
+                "Work on 'Install socket in the meeting room' was completed.",
+                "k",
+                True,
+            ),
+            (
+                "done-k-disp",
+                "dispatcher",
+                "JOB_COMPLETED",
+                "Job completed",
+                "Work on 'Install socket in the meeting room' was completed.",
+                "k",
+                False,
+            ),
+            (
+                "done-k-admin",
+                "admin",
+                "JOB_COMPLETED",
+                "Job completed",
+                "Work on 'Install socket in the meeting room' was completed.",
+                "k",
+                True,
+            ),
+            (
+                "est-j",
+                "dispatcher",
+                "ESTIMATE_DECIDED",
+                "Estimate approved",
+                "Estimate v2 for 'Repair the stuck service door' was approved.",
+                "j",
+                False,
+            ),
+            (
+                "rework-f",
+                "dispatcher",
+                "REWORK_REQUESTED",
+                "Rework requested",
+                "The requester reopened 'Thermostat reading is wrong' for rework.",
+                "f",
+                False,
+            ),
+        )
+        for key, who, type_, title, body, rkey, read in rows:
+            nid = uid("notification", spec.key, key)
+            req = req_of(rkey)
+            if req is None or self.db.get(Notification, nid) is not None:
+                continue
+            self.db.add(
+                Notification(
+                    id=nid,
+                    organization_id=org.id,
+                    recipient_membership_id=members[who].id,
+                    type=type_,
+                    title=title,
+                    body=body,
+                    request_id=req.id,
+                    data={"seed": True},
+                    read_at=now if read else None,
+                    dedupe_key=f"seed:{key}",
+                )
+            )
+        self.db.flush()
 
     def _new_request(self, org, spec, requester, rid, pidx, cat, title, prio) -> ServiceRequest:
         number = self.db.execute(

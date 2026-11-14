@@ -4,7 +4,7 @@ from typing import Any
 
 from pydantic import AwareDatetime, BaseModel, Field
 
-from app.models.enums import AssignmentStatus, Priority, RequestStatus
+from app.models.enums import AssignmentStatus, EstimateStatus, Priority, RequestStatus
 from app.schemas.requests import AppointmentBrief, PersonBrief, Reason
 
 
@@ -99,6 +99,10 @@ class MyAssignmentItem(BaseModel):
     appointment: AppointmentBrief
     assignment_status: AssignmentStatus
     allowed_actions: list[str]
+    # Current estimate status (null when none was ever submitted) and, while the estimate gate
+    # blocks "start", a human-readable explanation for the mobile app.
+    estimate_status: EstimateStatus | None = None
+    start_blocked_reason: str | None = None
 
 
 class ScheduleInterval(BaseModel):

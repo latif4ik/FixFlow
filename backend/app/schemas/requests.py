@@ -12,7 +12,9 @@ from app.models.enums import (
     Priority,
     RequestStatus,
 )
-from app.schemas.common import ORMModel
+from app.schemas.common import ORMModel, PersonBrief
+from app.schemas.estimates import EstimateSummary
+from app.schemas.inventory import UsageOut
 
 Title = Annotated[str, StringConstraints(strip_whitespace=True, min_length=5, max_length=120)]
 Description = Annotated[
@@ -103,11 +105,6 @@ class AssetBrief(ORMModel):
 
 class CategoryBrief(ORMModel):
     id: uuid.UUID
-    name: str
-
-
-class PersonBrief(BaseModel):
-    membership_id: uuid.UUID
     name: str
 
 
@@ -204,9 +201,10 @@ class RequestDetail(RequestListItem):
     files: list[FileOut]
     timeline: list[TimelineItem]
     allowed_actions: list[str]
-    # Placeholders until the owning phases land (estimate, sla, materials).
     assignment: AssignmentBrief | None = None
     appointment: AppointmentBrief | None = None
-    estimate: None = None
+    # Current estimate (caller-visible) and recorded material usage (staff / technicians).
+    estimate: EstimateSummary | None = None
+    # Placeholder until Phase 3b (SLA).
     sla: None = None
-    materials: list[Any] = Field(default_factory=list)
+    materials: list[UsageOut] = Field(default_factory=list)

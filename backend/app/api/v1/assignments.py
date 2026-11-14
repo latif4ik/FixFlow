@@ -220,8 +220,7 @@ def accept(request_id: uuid.UUID, db: DbDep, ctx: TechCtx) -> RequestDetail:
 
 @router.post("/requests/{request_id}/start", response_model=RequestDetail)
 def start(request_id: uuid.UUID, db: DbDep, ctx: TechCtx) -> RequestDetail:
-    # HOOK (Phase 3): the estimate approval gate for ACCEPTED -> IN_PROGRESS lives in the
-    # lifecycle transition (Rule "start" guards).
+    # The estimate approval gate (EST-04) is a guard of the lifecycle rule "start".
     return _do(db, ctx, request_id, RequestStatus.IN_PROGRESS)
 
 

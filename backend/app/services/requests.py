@@ -585,6 +585,8 @@ def _current_assignment(db: Session, ctx: Ctx, req: ServiceRequest) -> Assignmen
 
 def get_detail(db: Session, ctx: Ctx, request_id: uuid.UUID) -> RequestDetail:
     from app.models.identity import Organization
+    from app.services import estimates as estimates_svc
+    from app.services import inventory as inventory_svc
     from app.services.notes import notes_stmt
 
     req = get_visible_request(db, ctx, request_id)
@@ -639,4 +641,6 @@ def get_detail(db: Session, ctx: Ctx, request_id: uuid.UUID) -> RequestDetail:
         files=[file_out(f) for f in files],
         timeline=build_timeline(db, ctx, events),
         allowed_actions=lifecycle.allowed_actions(db, ctx, req),
+        estimate=estimates_svc.current_summary(db, ctx, req),
+        materials=(inventory_svc.list_usage(db, ctx, req.id) if ctx.role != R.REQUESTER else []),
     )

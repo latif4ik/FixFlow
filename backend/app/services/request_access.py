@@ -47,8 +47,45 @@ def technician_visibility_filter(ctx: Ctx) -> Any:
 
 
 def validate_materials_for_completion(db: Session, request: ServiceRequest) -> None:
-    """HOOK (Phase 3): raise a 422 AppError when recorded materials are invalid."""
-    return None
+    """Raise 422 ``materials_invalid`` when any recorded usage row of the request is unsound:
+    item missing from the org, non-positive quantity, missing/negative cost snapshot, or a total
+    that does not equal quantity x snapshot (deterministic half-up). Normally always OK: the DB
+    constraints make bad rows hard to create; this is the completion-time integrity check."""
+    from app.core import money
+    from app.core.errors import AppError
+    from app.models.inventory import InventoryItem, MaterialUsage
+
+    rows = db.execute(
+        select(MaterialUsage, InventoryItem.id)
+        .outerjoin(
+            InventoryItem,
+            (InventoryItem.organization_id == MaterialUsage.organization_id)
+            & (InventoryItem.id == MaterialUsage.item_id),
+        )
+        .where(
+            MaterialUsage.organization_id == request.organization_id,
+            MaterialUsage.request_id == request.id,
+        )
+    ).all()
+    bad: list[dict[str, Any]] = []
+    for usage, item_id in rows:
+        problems = []
+        if item_id is None:
+            problems.append("item not found in organization")
+        if usage.quantity is None or usage.quantity <= 0:
+            problems.append("quantity must be positive")
+        elif usage.unit_cost_minor_snapshot is None or usage.unit_cost_minor_snapshot < 0:
+            problems.append("unit cost snapshot missing")
+        elif usage.total_cost_minor != money.line_total_minor(
+            usage.quantity, usage.unit_cost_minor_snapshot
+        ):
+            problems.append("total does not match quantity x unit cost snapshot")
+        if problems:
+            bad.append({"usage_id": str(usage.id), "problems": problems})
+    if bad:
+        raise AppError(
+            422, "materials_invalid", "Recorded materials are inconsistent.", {"usages": bad}
+        )
 
 
 # ---- visibility ------------------------------------------------------------------------
