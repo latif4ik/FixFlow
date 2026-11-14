@@ -1,10 +1,12 @@
 import logging
+import re
 from http import HTTPStatus
 from typing import Any, cast
 
 from fastapi import FastAPI, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
+from sqlalchemy.exc import IntegrityError
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from app.core.logging import request_id_var
@@ -66,6 +68,11 @@ class Conflict(AppError):
 class ValidationFailed(AppError):
     def __init__(self, message: str = "Validation failed.", details: Any = None) -> None:
         super().__init__(422, "validation_error", message, details)
+
+
+class TooManyRequests(AppError):
+    def __init__(self, message: str = "Too many requests.", details: Any = None) -> None:
+        super().__init__(429, "too_many_requests", message, details)
 
 
 class BadRequest(AppError):
@@ -143,8 +150,58 @@ async def _unhandled_handler(request: Request, exc: Exception) -> JSONResponse:
     )
 
 
+# PostgreSQL SQLSTATE classes we translate.
+_UNIQUE_VIOLATION = "23505"
+_FK_VIOLATION = "23503"
+_CHECK_VIOLATION = "23514"
+_NOT_NULL_VIOLATION = "23502"
+_KEY_RE = re.compile(r"Key \((?P<cols>[^)]*)\)")
+
+
+def _unique_field_hint(orig: Any) -> list[str]:
+    detail = getattr(getattr(orig, "diag", None), "message_detail", None) or ""
+    m = _KEY_RE.search(detail)
+    if not m:
+        return []
+    cols = [c.strip() for c in m.group("cols").split(",")]
+    fields = [c for c in cols if c != "organization_id"]
+    # Expression indexes show up as e.g. "lower(name::text)".
+    return [re.sub(r"^lower\((\w+).*\)$", r"\1", c) for c in fields]
+
+
+async def _integrity_handler(request: Request, exc: Exception) -> JSONResponse:
+    exc = cast(IntegrityError, exc)
+    orig = exc.orig
+    sqlstate = getattr(orig, "sqlstate", None)
+    constraint = getattr(getattr(orig, "diag", None), "constraint_name", None)
+    rid = _rid(request)
+    if sqlstate == _UNIQUE_VIOLATION:
+        fields = _unique_field_hint(orig)
+        return JSONResponse(
+            error_body(
+                "conflict",
+                "A record with the same unique value already exists.",
+                {"fields": fields, "constraint": constraint},
+                rid,
+            ),
+            status_code=409,
+        )
+    if sqlstate in (_FK_VIOLATION, _CHECK_VIOLATION, _NOT_NULL_VIOLATION):
+        return JSONResponse(
+            error_body(
+                "validation_error",
+                "The request violates a data integrity rule.",
+                {"constraint": constraint},
+                rid,
+            ),
+            status_code=422,
+        )
+    return await _unhandled_handler(request, exc)
+
+
 def register_error_handlers(app: FastAPI) -> None:
     app.add_exception_handler(AppError, _app_error_handler)
     app.add_exception_handler(StarletteHTTPException, _http_exception_handler)
     app.add_exception_handler(RequestValidationError, _validation_handler)
+    app.add_exception_handler(IntegrityError, _integrity_handler)
     app.add_exception_handler(Exception, _unhandled_handler)

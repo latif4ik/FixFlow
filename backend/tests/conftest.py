@@ -5,7 +5,9 @@ from pathlib import Path
 import pytest
 from alembic.config import Config
 from fastapi.testclient import TestClient
+from sqlalchemy import text
 from sqlalchemy.engine import make_url
+from sqlalchemy.orm import Session
 
 from alembic import command
 from app.db.session import build_engine, set_engine
@@ -46,8 +48,30 @@ def migrated_db(test_database_url: str) -> str:
     return test_database_url
 
 
+def _truncate_all(engine) -> None:
+    with engine.begin() as conn:
+        names = conn.execute(
+            text(
+                "SELECT tablename FROM pg_tables WHERE schemaname = 'public' "
+                "AND tablename <> 'alembic_version'"
+            )
+        ).scalars()
+        quoted = ", ".join(f'"{n}"' for n in names)
+        if quoted:
+            conn.execute(text(f"TRUNCATE {quoted} RESTART IDENTITY CASCADE"))
+
+
 @pytest.fixture
-def client(migrated_db: str) -> Iterator[TestClient]:
+def db_engine(migrated_db: str) -> Iterator[object]:
+    """Engine on the migrated test DB with every table emptied first."""
+    engine = build_engine(migrated_db)
+    _truncate_all(engine)
+    yield engine
+    engine.dispose()
+
+
+@pytest.fixture
+def client(migrated_db: str, db_engine: object) -> Iterator[TestClient]:
     set_engine(build_engine(migrated_db))
     with TestClient(create_app()) as c:
         yield c
@@ -55,7 +79,6 @@ def client(migrated_db: str) -> Iterator[TestClient]:
 
 
 @pytest.fixture
-def db_engine(migrated_db: str) -> Iterator[object]:
-    engine = build_engine(migrated_db)
-    yield engine
-    engine.dispose()
+def db(db_engine) -> Iterator[Session]:
+    with Session(db_engine, expire_on_commit=False) as session:
+        yield session

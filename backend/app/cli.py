@@ -1,7 +1,7 @@
 """Operational CLI: ``python -m app.cli <command>``.
 
 Extension points for later phases (add a subparser + handler for each):
-  - seed                 load demo data
+  - seed                 load demo data (implemented)
   - reset-demo           wipe and re-seed the demo organisations
   - sla-escalate         notify on overdue requests (idempotent)
   - generate-maintenance generate maintenance-plan requests (--as-of DATE)
@@ -70,6 +70,18 @@ def _cmd_check_db(_: argparse.Namespace) -> int:
     return 1
 
 
+def _cmd_seed(_: argparse.Namespace) -> int:
+    from app.db.session import SessionLocal, get_engine
+    from app.seed import DEMO_PASSWORD, format_credentials, seed
+
+    get_engine()
+    with SessionLocal() as db:
+        rows = seed(db)
+    print(format_credentials(rows))
+    print(f"\nDisposable demo credentials only. Password for every account: {DEMO_PASSWORD}")
+    return 0
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="python -m app.cli", description="FixFlow CLI")
     sub = parser.add_subparsers(dest="command", required=True)
@@ -77,6 +89,9 @@ def build_parser() -> argparse.ArgumentParser:
         func=_cmd_wait_db
     )
     sub.add_parser("check-db", help="single connectivity check").set_defaults(func=_cmd_check_db)
+    sub.add_parser("seed", help="load deterministic demo data (idempotent)").set_defaults(
+        func=_cmd_seed
+    )
     return parser
 
 

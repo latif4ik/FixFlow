@@ -10,7 +10,8 @@ config = context.config
 if config.config_file_name is not None:
     fileConfig(config.config_file_name, disable_existing_loggers=False)
 
-# Import model modules here once they exist so autogenerate sees them.
+import app.models  # noqa: F401,E402  (registers all tables on Base.metadata)
+
 target_metadata = Base.metadata
 
 
