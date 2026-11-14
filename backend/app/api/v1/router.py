@@ -12,8 +12,10 @@ from app.api.v1 import (
     notifications,
     org,
     properties,
+    reports,
     requests,
     sla,
+    stream,
     technicians,
 )
 
@@ -34,3 +36,5 @@ api_router.include_router(notifications.router)
 api_router.include_router(inventory.router)
 api_router.include_router(sla.router)
 api_router.include_router(maintenance.router)
+api_router.include_router(reports.router)
+api_router.include_router(stream.router)

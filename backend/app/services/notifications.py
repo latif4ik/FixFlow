@@ -17,6 +17,7 @@ from sqlalchemy import func, select, update
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.orm import Session
 
+from app.core import events as live
 from app.core.audit import sanitize
 from app.core.errors import NotFound
 from app.core.pagination import PageParams, paginate_rows
@@ -35,6 +36,7 @@ ESTIMATE_DECIDED = "ESTIMATE_DECIDED"
 JOB_COMPLETED = "JOB_COMPLETED"
 REWORK_REQUESTED = "REWORK_REQUESTED"
 OVERDUE_ESCALATION = "OVERDUE_ESCALATION"  # Phase 3b
+FEEDBACK_RECEIVED = "FEEDBACK_RECEIVED"
 
 
 def staff_recipients(db: Session, org_id: uuid.UUID) -> list[uuid.UUID]:
@@ -90,9 +92,21 @@ def notify(
         .on_conflict_do_nothing(
             index_elements=["organization_id", "recipient_membership_id", "dedupe_key"]
         )
-        .returning(Notification.id)
+        .returning(Notification.id, Notification.recipient_membership_id)
     )
-    return len(res.all())
+    inserted = res.all()
+    for nid, rid in inserted:  # delivered by Postgres only if this transaction commits
+        live.publish(
+            db,
+            {
+                "org_id": org_id,
+                "kind": live.NOTIFICATION_CREATED,
+                "recipient_membership_id": rid,
+                "notification_id": nid,
+                "request_id": request_id,
+            },
+        )
+    return len(inserted)
 
 
 # ---- reading / marking -----------------------------------------------------------------

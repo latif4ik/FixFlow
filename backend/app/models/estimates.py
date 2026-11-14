@@ -70,6 +70,12 @@ class Estimate(UUIDPkMixin, TimestampMixin, Base):
             postgresql_where=text("status = 'AWAITING_APPROVAL'"),
         ),
         Index("ix_estimates_org_status", "organization_id", "status"),
+        Index(
+            "ix_estimates_org_decided",
+            "organization_id",
+            "decided_at",
+            postgresql_where=text("status = 'APPROVED'"),
+        ),
     )
 
     organization_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("organizations.id"))

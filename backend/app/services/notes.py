@@ -152,7 +152,8 @@ def create_note(
     attachment_ids: list[uuid.UUID] | None = None,
 ) -> tuple[WorkNote, bool]:
     """Returns (note, created). ``created`` is False for an identical idempotent replay."""
-    request = get_visible_request(db, ctx, request_id)
+    # Lock the row so a note cannot race a concurrent close/cancel.
+    request = get_visible_request(db, ctx, request_id, lock=True)
     ensure_can_add_note(db, ctx, request)
     if kind not in USER_KINDS or (kind == NoteKind.TRIAGE and not is_staff(ctx)):
         raise ValidationFailed(

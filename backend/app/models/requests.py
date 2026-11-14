@@ -85,6 +85,12 @@ class ServiceRequest(UUIDPkMixin, TimestampMixin, Base):
             "OR preferred_window_end > preferred_window_start",
             name="preferred_window_order",
         ),
+        Index(
+            "ix_service_requests_org_completed",
+            "organization_id",
+            "completed_at",
+            postgresql_where=text("completed_at IS NOT NULL"),
+        ),
         Index("ix_service_requests_org_status", "organization_id", "status"),
         Index("ix_service_requests_org_created", "organization_id", text("created_at DESC")),
         Index("ix_service_requests_org_requester", "organization_id", "requester_membership_id"),

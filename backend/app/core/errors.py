@@ -6,7 +6,8 @@ from typing import Any, cast
 from fastapi import FastAPI, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
-from sqlalchemy.exc import IntegrityError
+from sqlalchemy.exc import DBAPIError, IntegrityError, OperationalError
+from sqlalchemy.exc import TimeoutError as PoolTimeoutError
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from app.core.logging import request_id_var
@@ -111,8 +112,13 @@ async def _app_error_handler(request: Request, exc: Exception) -> JSONResponse:
 
 async def _http_exception_handler(request: Request, exc: Exception) -> JSONResponse:
     exc = cast(StarletteHTTPException, exc)
-    message = exc.detail if isinstance(exc.detail, str) else HTTPStatus(exc.status_code).phrase
-    details = None if isinstance(exc.detail, str) else exc.detail
+    detail = exc.detail
+    if isinstance(detail, dict) and isinstance(detail.get("message"), str):
+        message = detail["message"]  # {"message": ..., **details}
+        details = {k: v for k, v in detail.items() if k != "message"} or None
+    else:
+        message = detail if isinstance(detail, str) else HTTPStatus(exc.status_code).phrase
+        details = None if isinstance(detail, str) else detail
     return JSONResponse(
         error_body(_code_for_status(exc.status_code), message, details, _rid(request)),
         status_code=exc.status_code,
@@ -199,9 +205,43 @@ async def _integrity_handler(request: Request, exc: Exception) -> JSONResponse:
     return await _unhandled_handler(request, exc)
 
 
+_RETRYABLE_STATES = frozenset({"40001", "40P01"})  # serialization_failure, deadlock_detected
+
+
+async def _dbapi_handler(request: Request, exc: Exception) -> JSONResponse:
+    """Serialization failures/deadlocks -> 409 conflict_retry; DB unreachable -> 503."""
+    rid = _rid(request)
+    sqlstate = getattr(getattr(exc, "orig", None), "sqlstate", None)
+    if sqlstate in _RETRYABLE_STATES:
+        return JSONResponse(
+            error_body(
+                "conflict_retry",
+                "The change conflicted with a concurrent update. Please retry.",
+                {"retryable": True},
+                rid,
+            ),
+            status_code=409,
+        )
+    if isinstance(exc, OperationalError | PoolTimeoutError):
+        logger.error("database unavailable", exc_info=(type(exc), exc, exc.__traceback__))
+        return JSONResponse(
+            error_body(
+                "service_unavailable",
+                "The service is temporarily unavailable. Please try again shortly.",
+                None,
+                rid,
+            ),
+            status_code=503,
+            headers={"Retry-After": "2"},
+        )
+    return await _unhandled_handler(request, exc)
+
+
 def register_error_handlers(app: FastAPI) -> None:
     app.add_exception_handler(AppError, _app_error_handler)
     app.add_exception_handler(StarletteHTTPException, _http_exception_handler)
     app.add_exception_handler(RequestValidationError, _validation_handler)
+    app.add_exception_handler(DBAPIError, _dbapi_handler)
+    app.add_exception_handler(PoolTimeoutError, _dbapi_handler)
     app.add_exception_handler(IntegrityError, _integrity_handler)
     app.add_exception_handler(Exception, _unhandled_handler)

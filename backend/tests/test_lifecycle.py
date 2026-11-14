@@ -290,10 +290,10 @@ def test_failed_audit_rolls_everything_back(client, db, w, hd, monkeypatch):
         raise RuntimeError("audit down")
 
     monkeypatch.setattr(lifecycle, "record_audit", boom)
-    with pytest.raises(RuntimeError):
-        client.post(
-            f"{API}/requests/{req.id}/triage", json={"note": "internal triage"}, headers=hd["disp"]
-        )
+    r = client.post(
+        f"{API}/requests/{req.id}/triage", json={"note": "internal triage"}, headers=hd["disp"]
+    )
+    assert r.status_code == 500 and r.json()["error"]["code"] == "internal_error"
     db.expire_all()
     fresh = db.get(ServiceRequest, req.id)
     assert fresh is not None and fresh.status == S.SUBMITTED

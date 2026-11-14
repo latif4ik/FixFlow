@@ -137,7 +137,10 @@ def upload_file(
     """Returns (row, created). ``created`` is False for an identical idempotent replay."""
     settings = get_settings()
     request = get_visible_request(db, ctx, request_id)
-    _check_permission(db, ctx, request, purpose)
+    if client_command_id is None:
+        _check_permission(db, ctx, request, purpose)  # cheap early reject before streaming
+    # With a client_command_id the permission/status check for a NEW upload happens only after
+    # the replay lookup: a retried upload after a status change must return the original row.
     index = (client_index or 0) if client_command_id is not None else None
 
     tmp_dir = upload_root() / "tmp"
@@ -155,6 +158,7 @@ def upload_file(
             existing = _find_existing(db, ctx, client_command_id, index)
             if existing is not None:
                 return _replay(existing, ctx, request, sha, purpose), False
+            _check_permission(db, ctx, request, purpose)
 
         # Lock the request row so the status check + INTAKE count cannot race.
         locked = get_visible_request(db, ctx, request_id, lock=True)

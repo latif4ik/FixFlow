@@ -646,6 +646,18 @@ def _current_assignment(db: Session, ctx: Ctx, req: ServiceRequest) -> Assignmen
     )
 
 
+def _feedback_out(db: Session, ctx: Ctx, req: ServiceRequest):
+    from app.schemas.requests import FeedbackOut
+    from app.services.feedback import get_feedback
+
+    fb = get_feedback(db, ctx.org_id, req.id)
+    return (
+        FeedbackOut(id=fb.id, rating=fb.rating, comment=fb.comment, created_at=fb.created_at)
+        if fb
+        else None
+    )
+
+
 def get_detail(db: Session, ctx: Ctx, request_id: uuid.UUID) -> RequestDetail:
     from app.models.identity import Organization
     from app.services import estimates as estimates_svc
@@ -708,5 +720,6 @@ def get_detail(db: Session, ctx: Ctx, request_id: uuid.UUID) -> RequestDetail:
         allowed_actions=lifecycle.allowed_actions(db, ctx, req),
         estimate=estimates_svc.current_summary(db, ctx, req),
         sla=SlaOut(**asdict(sla_svc.live_state(db, req, now))),
+        feedback=_feedback_out(db, ctx, req),
         materials=(inventory_svc.list_usage(db, ctx, req.id) if ctx.role != R.REQUESTER else []),
     )

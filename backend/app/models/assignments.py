@@ -71,6 +71,7 @@ class Assignment(UUIDPkMixin, TimestampMixin, Base):
             "start_at",
         ),
         Index("ix_assignments_org_request", "organization_id", "request_id"),
+        Index("ix_assignments_org_start_end", "organization_id", "start_at", "end_at"),
     )
 
     organization_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("organizations.id"))

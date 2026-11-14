@@ -20,6 +20,11 @@ class Settings(BaseSettings):
     MAX_PAGE_SIZE: int = 100
     DEFAULT_PAGE_SIZE: int = 20
     MAX_UPLOAD_BYTES: int = 10 * 1024 * 1024
+    # Server-Sent Events (live updates)
+    STREAM_TICKET_TTL_SECONDS: int = 60
+    STREAM_HEARTBEAT_SECONDS: float = 15
+    STREAM_REVALIDATE_SECONDS: float = 30
+    STREAM_QUEUE_SIZE: int = 100
 
     @field_validator("CORS_ORIGINS", mode="before")
     @classmethod

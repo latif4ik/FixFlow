@@ -243,8 +243,8 @@ def test_db_failure_leaves_no_file_or_row(client, db, w, hd, monkeypatch):
         raise RuntimeError("db down")
 
     monkeypatch.setattr(files_svc, "record_audit", boom)
-    with pytest.raises(RuntimeError):
-        upload(client, hd["req1"], req.id, image_bytes())
+    r = upload(client, hd["req1"], req.id, image_bytes())
+    assert r.status_code == 500 and r.json()["error"]["code"] == "internal_error"
     assert count_rows(db) == 0 and stored_files() == []
     assert db.scalar(select(func.count()).select_from(RequestEvent)) == 0
 

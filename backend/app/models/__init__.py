@@ -5,6 +5,7 @@ from app.models.assignments import Assignment, IdempotencyKey
 from app.models.audit import AuditEvent
 from app.models.enums import AssetStatus, MembershipRole
 from app.models.estimates import Estimate, EstimateLine
+from app.models.feedback import Feedback, StreamTicket
 from app.models.identity import Membership, Organization, SecurityEvent, Session, User
 from app.models.inventory import InventoryItem, MaterialUsage, StockMovement
 from app.models.maintenance import MaintenancePlan
@@ -32,6 +33,7 @@ __all__ = [
     "Estimate",
     "EstimateLine",
     "EvidenceFile",
+    "Feedback",
     "Holiday",
     "IdempotencyKey",
     "InventoryItem",
@@ -50,6 +52,7 @@ __all__ = [
     "Session",
     "Skill",
     "StockMovement",
+    "StreamTicket",
     "TechnicianAvailability",
     "TechnicianProfile",
     "TechnicianSkill",

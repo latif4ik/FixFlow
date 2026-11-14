@@ -78,7 +78,7 @@ def test_downgrade_to_0002_and_upgrade_again(migrated_db: str, db_engine) -> Non
         n = conn.execute(
             text("SELECT count(*) FROM pg_trigger WHERE tgname LIKE 'trg_%_immutable'")
         ).scalar()
-        assert n == 7  # audit, events, notes + Phase 3a: estimates, lines, usage, movements
+        assert n == 8  # audit, events, notes, estimates, lines, usage, movements, feedback
 
 
 def test_downgrade_to_0003_and_upgrade_again(migrated_db: str, db_engine) -> None:
@@ -205,3 +205,36 @@ def test_downgrade_to_0005_and_upgrade_again(migrated_db: str, db_engine) -> Non
             ).scalar()
             == 1
         )
+
+
+def test_downgrade_to_0006_and_upgrade_again(migrated_db: str, db_engine) -> None:
+    from alembic import command
+
+    cfg = _alembic_cfg(migrated_db)
+    db_engine.dispose()
+    command.downgrade(cfg, "0006_sla_maintenance")
+    with db_engine.connect() as conn:
+        assert conn.execute(text("SELECT to_regclass('public.feedback')")).scalar() is None
+        assert conn.execute(text("SELECT to_regclass('public.stream_tickets')")).scalar() is None
+        assert conn.execute(text("SELECT to_regclass('public.maintenance_plans')")).scalar()
+        assert (
+            conn.execute(
+                text(
+                    "SELECT count(*) FROM pg_indexes WHERE indexname IN "
+                    "('ix_service_requests_org_completed','ix_estimates_org_decided',"
+                    "'ix_material_usage_org_created','ix_assignments_org_start_end')"
+                )
+            ).scalar()
+            == 0
+        )
+    command.upgrade(cfg, "head")
+    with db_engine.connect() as conn:
+        assert conn.execute(text("SELECT to_regclass('public.feedback')")).scalar()
+        assert conn.execute(text("SELECT to_regclass('public.stream_tickets')")).scalar()
+        assert (
+            conn.execute(
+                text("SELECT count(*) FROM pg_trigger WHERE tgname = 'trg_feedback_immutable'")
+            ).scalar()
+            == 1
+        )
+    test_models_match_migrations(migrated_db, db_engine)

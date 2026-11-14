@@ -2,7 +2,14 @@ import uuid
 from datetime import date, datetime
 from typing import Annotated, Any
 
-from pydantic import AwareDatetime, BaseModel, Field, StringConstraints, model_validator
+from pydantic import (
+    AwareDatetime,
+    BaseModel,
+    Field,
+    StringConstraints,
+    field_validator,
+    model_validator,
+)
 
 from app.models.enums import (
     AssignmentStatus,
@@ -180,6 +187,24 @@ class TimelineItem(BaseModel):
     created_at: datetime
 
 
+class FeedbackIn(BaseModel):
+    rating: int = Field(ge=1, le=5)
+    comment: str | None = Field(default=None, max_length=2000)
+
+    @field_validator("comment")
+    @classmethod
+    def _strip(cls, v: str | None) -> str | None:
+        v = v.strip() if v else v
+        return v or None
+
+
+class FeedbackOut(BaseModel):
+    id: uuid.UUID
+    rating: int
+    comment: str | None
+    created_at: datetime
+
+
 class DuplicateBrief(BaseModel):
     id: uuid.UUID
     number: int
@@ -228,3 +253,4 @@ class RequestDetail(RequestListItem):
     estimate: EstimateSummary | None = None
     sla: SlaOut | None = None
     materials: list[UsageOut] = Field(default_factory=list)
+    feedback: FeedbackOut | None = None

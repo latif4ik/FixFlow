@@ -3,10 +3,14 @@
 from datetime import datetime
 from typing import Any
 
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
+from app.core import events as live
 from app.core.audit import sanitize
 from app.core.tenancy import Ctx
+from app.models.assignments import Assignment
+from app.models.enums import AssignmentStatus
 from app.models.requests import RequestEvent, ServiceRequest
 from app.sla.engine import is_sla_event
 
@@ -30,6 +34,7 @@ EVENT_LABELS = {
     "ESTIMATE_WITHDRAWN": "Estimate withdrawn",
     "MATERIAL_USED": "Material used",
     "SLA_ESCALATED": "Escalated: request is overdue",
+    "FEEDBACK_SUBMITTED": "Feedback submitted",
 }
 # Event types requesters never see (internal triage activity).
 STAFF_ONLY_EVENTS = frozenset(
@@ -78,4 +83,33 @@ def add_event(
         from app.sla.service import recompute_sla  # local import: sla.service imports models
 
         recompute_sla(db, request)
+    _publish_changed(db, request)
     return ev
+
+
+def _publish_changed(db: Session, request: ServiceRequest) -> None:
+    """Queue a ``request.changed`` signal (delivered by Postgres only if the txn commits).
+
+    Technicians addressed: those with a live (ACTIVE/COMPLETED) assignment plus any whose
+    assignment row was touched in THIS transaction (so a just-unassigned/declined technician
+    learns that the job disappeared)."""
+    techs = db.scalars(
+        select(Assignment.technician_membership_id)
+        .where(
+            Assignment.organization_id == request.organization_id,
+            Assignment.request_id == request.id,
+            Assignment.status.in_([AssignmentStatus.ACTIVE, AssignmentStatus.COMPLETED])
+            | (Assignment.updated_at >= func.now()),
+        )
+        .distinct()
+    )
+    live.publish(
+        db,
+        {
+            "org_id": request.organization_id,
+            "kind": live.REQUEST_CHANGED,
+            "request_id": request.id,
+            "requester_membership_id": request.requester_membership_id,
+            "technician_membership_ids": sorted(techs, key=str),
+        },
+    )

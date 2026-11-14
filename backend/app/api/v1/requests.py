@@ -10,6 +10,8 @@ from app.core.pagination import Page, Pagination, make_page
 from app.models.enums import FilePurpose, Priority, RequestStatus
 from app.schemas.requests import (
     DuplicateIn,
+    FeedbackIn,
+    FeedbackOut,
     FileOut,
     NoteIn,
     NoteOut,
@@ -23,6 +25,7 @@ from app.schemas.requests import (
     TransitionIn,
     TriageIn,
 )
+from app.services import feedback as feedback_svc
 from app.services import files as files_svc
 from app.services import lifecycle
 from app.services import notes as notes_svc
@@ -194,6 +197,14 @@ def upload_file(
     if not created:
         response.status_code = 200
     return svc.file_out(row)
+
+
+@router.post("/requests/{request_id}/feedback", response_model=FeedbackOut, status_code=201)
+def submit_feedback(
+    request_id: uuid.UUID, body: FeedbackIn, db: DbDep, ctx: CurrentCtx
+) -> FeedbackOut:
+    fb = feedback_svc.submit_feedback(db, ctx, request_id, body.rating, body.comment)
+    return FeedbackOut(id=fb.id, rating=fb.rating, comment=fb.comment, created_at=fb.created_at)
 
 
 @files_router.get("/files/{file_id}")

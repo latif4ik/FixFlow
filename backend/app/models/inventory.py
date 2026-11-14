@@ -77,6 +77,7 @@ class MaterialUsage(UUIDPkMixin, Base):
         CheckConstraint("unit_cost_minor_snapshot >= 0", name="unit_cost_nonneg"),
         CheckConstraint("total_cost_minor >= 0", name="total_cost_nonneg"),
         Index("ix_material_usage_request", "request_id", "created_at"),
+        Index("ix_material_usage_org_created", "organization_id", "created_at"),
     )
 
     organization_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("organizations.id"))
