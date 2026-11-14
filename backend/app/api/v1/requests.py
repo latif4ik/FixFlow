@@ -54,6 +54,10 @@ def list_requests(
     created_from: datetime | None = None,
     created_to: datetime | None = None,
     sort: Sort = "newest",
+    technician_id: Annotated[
+        uuid.UUID | None,
+        Query(description="Requests currently assigned (or completed) by this technician."),
+    ] = None,
 ) -> dict:
     items, total = svc.list_requests(
         db,
@@ -68,6 +72,7 @@ def list_requests(
         created_from=created_from,
         created_to=created_to,
         sort=sort,
+        technician_id=technician_id,
     )
     return make_page(items, total, params)
 

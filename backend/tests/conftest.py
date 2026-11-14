@@ -102,3 +102,24 @@ def _upload_dir() -> Iterator[Path]:
 def _clean_upload_dir(_upload_dir: Path) -> None:
     for child in _upload_dir.iterdir():
         shutil.rmtree(child) if child.is_dir() else child.unlink()
+
+
+@pytest.fixture
+def sw(db: Session):
+    """Scheduling world: two skilled technicians available daily 09:00-18:00 Asia/Bishkek."""
+    from tests.sched_helpers import make_sched_world
+
+    return make_sched_world(db)
+
+
+@pytest.fixture
+def hd(client: TestClient, sw):
+    from tests.factories import h, login
+
+    w = sw.w
+    out = {
+        k: h(login(client, getattr(w, k)[0]), w.org)
+        for k in ("admin", "disp", "tech", "req1", "req2")
+    }
+    out["tech2"] = h(login(client, sw.tech2[0]), w.org)
+    return out

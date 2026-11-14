@@ -1,6 +1,7 @@
 """Import every model module so Alembic autogenerate sees all tables."""
 
 from app.models.assets import Asset, Property, PropertyAccess
+from app.models.assignments import Assignment, IdempotencyKey
 from app.models.audit import AuditEvent
 from app.models.enums import AssetStatus, MembershipRole
 from app.models.identity import Membership, Organization, SecurityEvent, Session, User
@@ -20,11 +21,13 @@ from app.models.requests import EvidenceFile, RequestEvent, ServiceRequest, Work
 __all__ = [
     "Asset",
     "AssetStatus",
+    "Assignment",
     "AuditEvent",
     "BusinessHour",
     "CategoryRequiredSkill",
     "EvidenceFile",
     "Holiday",
+    "IdempotencyKey",
     "Membership",
     "MembershipRole",
     "Organization",

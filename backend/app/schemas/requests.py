@@ -4,7 +4,14 @@ from typing import Annotated, Any
 
 from pydantic import AwareDatetime, BaseModel, Field, StringConstraints, model_validator
 
-from app.models.enums import FilePurpose, NoteKind, NoteVisibility, Priority, RequestStatus
+from app.models.enums import (
+    AssignmentStatus,
+    FilePurpose,
+    NoteKind,
+    NoteVisibility,
+    Priority,
+    RequestStatus,
+)
 from app.schemas.common import ORMModel
 
 Title = Annotated[str, StringConstraints(strip_whitespace=True, min_length=5, max_length=120)]
@@ -167,6 +174,21 @@ class OrgRef(BaseModel):
     name: str
 
 
+class AppointmentBrief(BaseModel):
+    start_at: datetime
+    end_at: datetime
+
+
+class AssignmentBrief(BaseModel):
+    """Summary embedded in the request detail."""
+
+    id: uuid.UUID
+    technician: PersonBrief
+    start_at: datetime
+    end_at: datetime
+    status: AssignmentStatus
+
+
 class RequestDetail(RequestListItem):
     description: str
     organization: OrgRef
@@ -182,9 +204,9 @@ class RequestDetail(RequestListItem):
     files: list[FileOut]
     timeline: list[TimelineItem]
     allowed_actions: list[str]
-    # Placeholders until the owning phases land.
-    assignment: None = None
-    appointment: None = None
+    # Placeholders until the owning phases land (estimate, sla, materials).
+    assignment: AssignmentBrief | None = None
+    appointment: AppointmentBrief | None = None
     estimate: None = None
     sla: None = None
     materials: list[Any] = Field(default_factory=list)

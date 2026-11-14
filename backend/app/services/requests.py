@@ -13,12 +13,15 @@ from app.core.errors import Conflict, Forbidden, NotFound, ValidationFailed
 from app.core.pagination import PageParams, paginate_rows
 from app.core.tenancy import Ctx
 from app.models.assets import Asset, Property, PropertyAccess
-from app.models.enums import AssetStatus, MembershipRole, Priority, RequestStatus
+from app.models.assignments import Assignment
+from app.models.enums import AssetStatus, AssignmentStatus, MembershipRole, Priority, RequestStatus
 from app.models.identity import Membership, User
 from app.models.org import ServiceCategory
 from app.models.requests import EvidenceFile, RequestEvent, ServiceRequest, WorkNote
 from app.schemas.requests import (
+    AppointmentBrief,
     AssetBrief,
+    AssignmentBrief,
     CategoryBrief,
     DuplicateBrief,
     FileOut,
@@ -334,9 +337,20 @@ def list_requests(
     created_from: datetime | None,
     created_to: datetime | None,
     sort: str,
+    technician_id: uuid.UUID | None = None,
 ) -> tuple[list[RequestListItem], int]:
-    # TODO(Phase 2b/3): technician, SLA state filters and the "due" sort need assignments/SLA.
+    # TODO(Phase 3): SLA state filters and the "due" sort need SLA.
     stmt = _list_base(ctx)
+    if technician_id:
+        stmt = stmt.where(
+            ServiceRequest.id.in_(
+                select(Assignment.request_id).where(
+                    Assignment.organization_id == ctx.org_id,
+                    Assignment.technician_membership_id == technician_id,
+                    Assignment.status.in_([AssignmentStatus.ACTIVE, AssignmentStatus.COMPLETED]),
+                )
+            )
+        )
     if statuses:
         stmt = stmt.where(ServiceRequest.status.in_(statuses))
     if priorities:
@@ -545,6 +559,30 @@ def list_timeline(
     return build_timeline(db, ctx, [r[0] for r in rows]), total
 
 
+def _current_assignment(db: Session, ctx: Ctx, req: ServiceRequest) -> AssignmentBrief | None:
+    """The ACTIVE assignment, else the most recent COMPLETED one (technicians: only their own)."""
+    base = select(Assignment).where(
+        Assignment.organization_id == ctx.org_id, Assignment.request_id == req.id
+    )
+    a = db.scalars(base.where(Assignment.active.is_(True))).first()
+    if a is None:
+        a = db.scalars(
+            base.where(Assignment.status == AssignmentStatus.COMPLETED)
+            .order_by(Assignment.end_at.desc())
+            .limit(1)
+        ).first()
+    if a is None:
+        return None
+    name = _names(db, ctx, {a.technician_membership_id}).get(a.technician_membership_id, "")
+    return AssignmentBrief(
+        id=a.id,
+        technician=PersonBrief(membership_id=a.technician_membership_id, name=name),
+        start_at=a.start_at,
+        end_at=a.end_at,
+        status=a.status,
+    )
+
+
 def get_detail(db: Session, ctx: Ctx, request_id: uuid.UUID) -> RequestDetail:
     from app.models.identity import Organization
     from app.services.notes import notes_stmt
@@ -578,8 +616,15 @@ def get_detail(db: Session, ctx: Ctx, request_id: uuid.UUID) -> RequestDetail:
         asset,
         names.get(req.requester_membership_id) if req.requester_membership_id else None,
     )
+    assignment = _current_assignment(db, ctx, req)
     return RequestDetail(
         **base.model_dump(),
+        assignment=assignment,
+        appointment=(
+            AppointmentBrief(start_at=assignment.start_at, end_at=assignment.end_at)
+            if assignment
+            else None
+        ),
         description=req.description,
         organization=OrgRef(id=org.id, name=org.name),
         created_by=_person(names, req.created_by_membership_id),

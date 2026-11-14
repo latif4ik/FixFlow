@@ -18,9 +18,23 @@ EVENT_LABELS = {
     "NOTE_ADDED": "Note added",
     "FILE_UPLOADED": "File uploaded",
     "REQUEST_UPDATED": "Request details updated",
+    "ASSIGNED": "Technician assigned",
+    "UNASSIGNED": "Technician unassigned",
+    "DECLINED": "Technician declined the job",
+    "RESCHEDULED": "Appointment rescheduled",
 }
 # Event types requesters never see (internal triage activity).
-STAFF_ONLY_EVENTS = frozenset({"PRIORITY_CHANGED", "CATEGORY_CHANGED", "DUPLICATE_LINKED"})
+STAFF_ONLY_EVENTS = frozenset(
+    {
+        "PRIORITY_CHANGED",
+        "CATEGORY_CHANGED",
+        "DUPLICATE_LINKED",
+        "ASSIGNED",
+        "UNASSIGNED",
+        "DECLINED",
+        "RESCHEDULED",
+    }
+)
 
 
 def add_event(

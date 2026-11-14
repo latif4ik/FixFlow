@@ -17,8 +17,9 @@ from sqlalchemy.orm import Session
 from app.core.audit import record_audit
 from app.core.errors import AppError, Forbidden, ValidationFailed
 from app.core.tenancy import Ctx
-from app.models.enums import FilePurpose, NoteKind, NoteVisibility, RequestStatus
+from app.models.enums import AssignmentStatus, FilePurpose, NoteKind, NoteVisibility, RequestStatus
 from app.models.requests import EvidenceFile, ServiceRequest
+from app.services.assignment_rows import release_active
 from app.services.notes import add_note_row
 from app.services.request_access import (
     get_visible_request,
@@ -77,7 +78,7 @@ _TRIAGE_RULE = Rule(
 TRANSITIONS: dict[tuple[RequestStatus, RequestStatus], tuple[Rule, ...]] = {
     (S.SUBMITTED, S.TRIAGED): (_TRIAGE_RULE,),
     # Phase 2b: performed by the assignment service (internal=True) after creating the assignment.
-    (S.TRIAGED, S.SCHEDULED): (Rule("staff", "schedule", internal=True),),
+    (S.TRIAGED, S.SCHEDULED): (Rule("staff", "assign", internal=True),),
     (S.SCHEDULED, S.ACCEPTED): (Rule("assigned_technician", "accept"),),
     (S.SCHEDULED, S.TRIAGED): (
         Rule(
@@ -162,10 +163,12 @@ def allowed_actions(db: Session, ctx: Ctx, request: ServiceRequest) -> list[str]
         if frm != request.status:
             continue
         for rule in rules:
-            if not rule.internal and _actor_matches(db, ctx, request, rule.who):
+            if _actor_matches(db, ctx, request, rule.who):
                 if rule.action not in actions:
                     actions.append(rule.action)
                 break
+    if is_staff(ctx) and request.status in (S.SCHEDULED, S.ACCEPTED):
+        actions.append("reschedule")  # same guard as "unassign": before work begins
     if request.status not in TERMINAL:
         actions.append("add_note")
         if is_staff(ctx):
@@ -173,6 +176,22 @@ def allowed_actions(db: Session, ctx: Ctx, request: ServiceRequest) -> list[str]
     if is_owner_requester(ctx, request) and request.status == S.SUBMITTED:
         actions.append("edit")
     return actions
+
+
+def apply_transition(
+    db: Session,
+    ctx: Ctx,
+    request_id: uuid.UUID,
+    to_status: RequestStatus,
+    *,
+    reason: str | None = None,
+    note_body: str | None = None,
+    extra: dict[str, Any] | None = None,
+    internal: bool = False,
+) -> ServiceRequest:
+    """Same as ``transition`` but WITHOUT commit/rollback: the caller owns the transaction
+    (assignment flows combine the assignment row change and the transition atomically)."""
+    return _transition(db, ctx, request_id, to_status, reason, note_body, extra, internal)
 
 
 def transition(
@@ -251,6 +270,12 @@ def _transition(
                 )
                 .values(note_id=note.id)
             )
+
+    # Assignment side effects commit/roll back with the transition (SCHED-06).
+    if to == S.COMPLETED:
+        release_active(db, ctx, request, AssignmentStatus.COMPLETED)
+    elif to == S.CANCELED and frm == S.SCHEDULED:
+        release_active(db, ctx, request, AssignmentStatus.CANCELED, text)
 
     request.status = to
     request.status_changed_at = now

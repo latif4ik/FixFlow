@@ -7,33 +7,43 @@ list, detail, notes, files and lifecycle code share one definition.
 import uuid
 from typing import Any
 
-from sqlalchemy import Select, false, select
+from sqlalchemy import Select, select
 from sqlalchemy.orm import Session
 
 from app.core.errors import NotFound
 from app.core.tenancy import Ctx
-from app.models.enums import MembershipRole
+from app.models.assignments import Assignment
+from app.models.enums import AssignmentStatus, MembershipRole
 from app.models.requests import ServiceRequest
 
 R = MembershipRole
 
 
 # ---- hooks filled in by later phases ---------------------------------------------------
-def get_active_assignment(db: Session, request: ServiceRequest) -> Any | None:
-    """HOOK (Phase 2b): the active assignment of ``request`` or None.
-
-    The returned object must expose ``technician_membership_id``. Until assignments
-    exist nobody is "the assigned technician", so technician actions are unavailable.
-    """
-    return None
+def get_active_assignment(db: Session, request: ServiceRequest) -> Assignment | None:
+    """The ACTIVE assignment of ``request`` (at most one: partial unique index) or None."""
+    return db.scalars(
+        select(Assignment).where(
+            Assignment.organization_id == request.organization_id,
+            Assignment.request_id == request.id,
+            Assignment.active.is_(True),
+        )
+    ).first()
 
 
 def technician_visibility_filter(ctx: Ctx) -> Any:
-    """HOOK (Phase 2b): SQL clause limiting ServiceRequest rows to a technician's own.
+    """SQL clause limiting ServiceRequest rows to a technician's own jobs.
 
-    Phase 2b replaces this with ``ServiceRequest.id IN (active assignments of ctx)``.
+    Visible while the technician's assignment is ACTIVE or COMPLETED; jobs they declined,
+    were unassigned from or were rescheduled away from become invisible (404).
     """
-    return false()
+    return ServiceRequest.id.in_(
+        select(Assignment.request_id).where(
+            Assignment.organization_id == ctx.org_id,
+            Assignment.technician_membership_id == ctx.membership_id,
+            Assignment.status.in_([AssignmentStatus.ACTIVE, AssignmentStatus.COMPLETED]),
+        )
+    )
 
 
 def validate_materials_for_completion(db: Session, request: ServiceRequest) -> None:

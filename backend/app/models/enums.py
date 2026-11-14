@@ -53,3 +53,12 @@ class FilePurpose(StrEnum):
     INTAKE = "INTAKE"
     NOTE = "NOTE"
     COMPLETION = "COMPLETION"
+
+
+class AssignmentStatus(StrEnum):
+    ACTIVE = "ACTIVE"
+    COMPLETED = "COMPLETED"
+    DECLINED = "DECLINED"
+    UNASSIGNED = "UNASSIGNED"
+    RESCHEDULED = "RESCHEDULED"
+    CANCELED = "CANCELED"

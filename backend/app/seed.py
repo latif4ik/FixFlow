@@ -7,8 +7,9 @@ string below; never use this in production.
 
 import uuid
 from dataclasses import dataclass
-from datetime import date, time
+from datetime import UTC, date, datetime, time, timedelta
 from typing import Any
+from zoneinfo import ZoneInfo
 
 from sqlalchemy import text
 from sqlalchemy.orm import Session
@@ -17,6 +18,7 @@ from app.core.audit import sanitize
 from app.core.security import hash_password
 from app.models import (
     Asset,
+    Assignment,
     BusinessHour,
     CategoryRequiredSkill,
     Membership,
@@ -34,7 +36,7 @@ from app.models import (
     User,
     WorkNote,
 )
-from app.models.enums import NoteKind, NoteVisibility, Priority, RequestStatus
+from app.models.enums import AssignmentStatus, NoteKind, NoteVisibility, Priority, RequestStatus
 
 DEMO_PASSWORD = "demo1234"  # noqa: S105 - disposable demo credential, documented
 NAMESPACE = uuid.UUID("6f1f2c4e-8f0b-4a53-9c63-0f1f0c5e11a0")
@@ -270,6 +272,7 @@ class Seeder:
                     granted_by_membership_id=members["admin"].id,
                 )
         self.seed_requests(org, spec, members)
+        self.seed_jobs(org, spec, members)
 
     def seed_requests(
         self, org: Organization, spec: OrgSpec, members: dict[str, Membership]
@@ -405,6 +408,284 @@ class Seeder:
                     "Check warranty before dispatching a contractor.",
                 )
             self.db.flush()
+
+    # ---- scheduled / in-flight / finished jobs with assignments (Phase 2b) ----------------
+    def seed_jobs(self, org: Organization, spec: OrgSpec, members: dict[str, Membership]) -> None:
+        """Requests in SCHEDULED, ACCEPTED, IN_PROGRESS, BLOCKED, COMPLETED and CLOSED with
+        matching assignments + request_events, plus the SEED-02 collision candidate.
+
+        Slots are anchored to the local date of the FIRST seed run (rows are skipped on re-runs,
+        so they never move): future business days for SCHEDULED/ACCEPTED, previous business
+        days for COMPLETED/CLOSED. Rows are inserted directly (like the rest of the seed), so
+        seeded completions deliberately bypass the completion-image guard (no files seeded).
+        All inserts respect the assignments exclusion constraint (no overlaps per technician).
+        """
+        S, P, N, A = RequestStatus, Priority, NoteKind, AssignmentStatus
+        tz = ZoneInfo(org.timezone)
+        today = datetime.now(tz).date()
+
+        def bday(offset: int) -> date:
+            """Business day ``offset`` days from today (0 = today, or next Monday on weekends)."""
+            d, step = today, (1 if offset > 0 else -1)
+            for _ in range(abs(offset)):
+                d += timedelta(days=step)
+                while d.weekday() >= 5:
+                    d += timedelta(days=step)
+            while d.weekday() >= 5:
+                d += timedelta(days=1)
+            return d
+
+        def slot(d: date, hour: int, minutes: int, minute: int = 0) -> tuple[datetime, datetime]:
+            start = datetime.combine(d, time(hour, minute), tzinfo=tz).astimezone(UTC)
+            return start, start + timedelta(minutes=minutes)
+
+        disp, req1 = members["dispatcher"], members["requester1"]
+        labels = {k: f"{label} ({spec.name})" for k, label, _ in PEOPLE}
+        # (key, property idx, category, title, priority, final status, tech, slot, extra)
+        jobs = (
+            (
+                "g",
+                0,
+                "Electrical",
+                "Replace burnt-out corridor lights",
+                P.NORMAL,
+                S.SCHEDULED,
+                "technician1",
+                slot(bday(1), 10, 60),
+                {},
+            ),
+            (
+                "h",
+                1,
+                "Plumbing",
+                "Fix dripping tap in the kitchen",
+                P.NORMAL,
+                S.ACCEPTED,
+                "technician2",
+                slot(bday(2), 14, 90),
+                {},
+            ),
+            (
+                "i",
+                0,
+                "HVAC",
+                "Service the lobby air handler",
+                P.HIGH,
+                S.IN_PROGRESS,
+                "technician3",
+                slot(bday(0), 9, 120),
+                {},
+            ),
+            (
+                "j",
+                1,
+                "General maintenance",
+                "Repair the stuck service door",
+                P.LOW,
+                S.BLOCKED,
+                "technician1",
+                slot(bday(0), 14, 60),
+                {"blocker": "Waiting for a replacement hinge."},
+            ),
+            (
+                "k",
+                0,
+                "Electrical",
+                "Install socket in the meeting room",
+                P.NORMAL,
+                S.COMPLETED,
+                "technician1",
+                slot(bday(-1), 10, 120),
+                {"completion": "Installed and tested the new socket; breaker labelled."},
+            ),
+            (
+                "l",
+                1,
+                "Plumbing",
+                "Unblock the washroom drain",
+                P.NORMAL,
+                S.CLOSED,
+                "technician2",
+                slot(bday(-1), 10, 60),
+                {"completion": "Cleared the drain and flushed the line; no further leaks."},
+            ),
+            # Active booking that the collision candidate (m) overlaps.
+            (
+                "n",
+                0,
+                "HVAC",
+                "Replace chiller filters",
+                P.NORMAL,
+                S.SCHEDULED,
+                "technician3",
+                slot(bday(3), 13, 120),
+                {},
+            ),
+        )
+        for key, pidx, cat, title, prio, final, tech_key, window, extra in jobs:
+            rid = uid("request", spec.key, key)
+            if self.db.get(ServiceRequest, rid) is not None:
+                continue
+            req = self._new_request(org, spec, req1, rid, pidx, cat, title, prio)
+            tech = members[tech_key]
+            start, end = window
+            reached = {
+                S.SCHEDULED: [S.SCHEDULED],
+                S.ACCEPTED: [S.SCHEDULED, S.ACCEPTED],
+                S.IN_PROGRESS: [S.SCHEDULED, S.ACCEPTED, S.IN_PROGRESS],
+                S.BLOCKED: [S.SCHEDULED, S.ACCEPTED, S.IN_PROGRESS, S.BLOCKED],
+                S.COMPLETED: [S.SCHEDULED, S.ACCEPTED, S.IN_PROGRESS, S.COMPLETED],
+                S.CLOSED: [S.SCHEDULED, S.ACCEPTED, S.IN_PROGRESS, S.COMPLETED, S.CLOSED],
+            }[final]
+            current = S.SUBMITTED
+            aid = uid("assignment", spec.key, key)
+            done = final in (S.COMPLETED, S.CLOSED)
+            for to in [S.TRIAGED, *reached]:
+                actor = {
+                    S.TRIAGED: disp,
+                    S.SCHEDULED: disp,
+                    S.CLOSED: req1,
+                }.get(to, tech)
+                note = None
+                if to == S.TRIAGED:
+                    note = self._note(
+                        org,
+                        req,
+                        disp,
+                        NoteVisibility.INTERNAL,
+                        N.TRIAGE,
+                        "Needs a technician visit.",
+                    )
+                elif to == S.BLOCKED:
+                    note = self._note(
+                        org, req, tech, NoteVisibility.PUBLIC, N.BLOCKER, extra["blocker"]
+                    )
+                elif to == S.COMPLETED:
+                    note = self._note(
+                        org, req, tech, NoteVisibility.PUBLIC, N.COMPLETION, extra["completion"]
+                    )
+                elif to == S.CLOSED:
+                    note = self._note(
+                        org, req, req1, NoteVisibility.PUBLIC, N.CLOSE, "Confirmed, thank you."
+                    )
+                data: dict[str, Any] = {"note_id": note.id} if note else {}
+                if to == S.SCHEDULED:
+                    self.db.add(
+                        Assignment(
+                            id=aid,
+                            organization_id=org.id,
+                            request_id=req.id,
+                            technician_membership_id=tech.id,
+                            start_at=start,
+                            end_at=end,
+                            status=A.COMPLETED if done else A.ACTIVE,
+                            active=not done,
+                            assigned_by_membership_id=disp.id,
+                        )
+                    )
+                    self.db.flush()
+                    self._event(
+                        org,
+                        req,
+                        disp,
+                        "ASSIGNED",
+                        None,
+                        None,
+                        {
+                            "assignment_id": str(aid),
+                            "technician": {"membership_id": str(tech.id), "name": labels[tech_key]},
+                            "start_at": start.isoformat(),
+                            "end_at": end.isoformat(),
+                            "reason": None,
+                        },
+                    )
+                    data["assignment_id"] = aid
+                self._event(org, req, actor, "STATUS_CHANGED", current, to, data or None)
+                current = to
+            req.status = final
+            if done:
+                req.completed_at = end
+            if final == S.CLOSED:
+                req.closed_at = end
+            self.db.flush()
+
+        # Technician-completed history for the seeded reopened request "f" (HVAC -> tech3).
+        f_id, f_aid = uid("request", spec.key, "f"), uid("assignment", spec.key, "f")
+        if self.db.get(ServiceRequest, f_id) is not None and self.db.get(Assignment, f_aid) is None:
+            start, end = slot(bday(-2), 14, 60)
+            self.db.add(
+                Assignment(
+                    id=f_aid,
+                    organization_id=org.id,
+                    request_id=f_id,
+                    technician_membership_id=members["technician3"].id,
+                    start_at=start,
+                    end_at=end,
+                    status=A.COMPLETED,
+                    active=False,
+                    assigned_by_membership_id=disp.id,
+                )
+            )
+            self.db.flush()
+
+        # SEED-02 collision candidate: a TRIAGED HVAC request (only technician3 has the hvac
+        # skill) whose preferred window overlaps technician3's active booking "n" (13:00-15:00
+        # on the 3rd business day): assigning technician3 in that window is rejected.
+        m_id = uid("request", spec.key, "m")
+        if self.db.get(ServiceRequest, m_id) is None:
+            pref_start, pref_end = slot(bday(3), 14, 90)
+            req = self._new_request(
+                org, spec, req1, m_id, 0, "HVAC", "Chiller noise in the server room", P.HIGH
+            )
+            req.preferred_window_start, req.preferred_window_end = pref_start, pref_end
+            note = self._note(
+                org, req, disp, NoteVisibility.INTERNAL, N.TRIAGE, "Collision demo: needs hvac."
+            )
+            self._event(
+                org,
+                req,
+                disp,
+                "STATUS_CHANGED",
+                RequestStatus.SUBMITTED,
+                RequestStatus.TRIAGED,
+                {"note_id": note.id},
+            )
+            req.status = RequestStatus.TRIAGED
+            self.db.flush()
+
+    def _new_request(self, org, spec, requester, rid, pidx, cat, title, prio) -> ServiceRequest:
+        number = self.db.execute(
+            text(
+                "UPDATE organizations SET request_seq = request_seq + 1 "
+                "WHERE id = :o RETURNING request_seq"
+            ),
+            {"o": org.id},
+        ).scalar_one()
+        req = self.ensure(
+            ServiceRequest,
+            rid,
+            id=rid,
+            organization_id=org.id,
+            number=number,
+            requester_membership_id=requester.id,
+            created_by_membership_id=requester.id,
+            property_id=uid("prop", spec.key, str(pidx)),
+            category_id=uid("cat", spec.key, cat),
+            title=title,
+            description="Reported by the tenant; the problem needs a technician visit soon.",
+            priority=prio,
+            status=RequestStatus.SUBMITTED,
+        )
+        self._event(
+            org,
+            req,
+            requester,
+            "REQUEST_CREATED",
+            None,
+            RequestStatus.SUBMITTED,
+            {"number": number},
+        )
+        return req
 
     def _event(self, org, req, actor, type_, frm, to, data) -> None:
         self.db.add(

@@ -1,6 +1,16 @@
 from fastapi import APIRouter
 
-from app.api.v1 import audit, auth, catalog, health, org, properties, requests, technicians
+from app.api.v1 import (
+    assignments,
+    audit,
+    auth,
+    catalog,
+    health,
+    org,
+    properties,
+    requests,
+    technicians,
+)
 
 api_router = APIRouter(prefix="/api/v1")
 api_router.include_router(health.router)
@@ -13,3 +23,4 @@ api_router.include_router(properties.assets_router)
 api_router.include_router(audit.router)
 api_router.include_router(requests.router)
 api_router.include_router(requests.files_router)
+api_router.include_router(assignments.router)

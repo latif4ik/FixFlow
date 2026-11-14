@@ -79,3 +79,50 @@ def test_downgrade_to_0002_and_upgrade_again(migrated_db: str, db_engine) -> Non
             text("SELECT count(*) FROM pg_trigger WHERE tgname LIKE 'trg_%_immutable'")
         ).scalar()
         assert n == 3
+
+
+def test_downgrade_to_0003_and_upgrade_again(migrated_db: str, db_engine) -> None:
+    from alembic import command
+
+    cfg = _alembic_cfg(migrated_db)
+    db_engine.dispose()
+    command.downgrade(cfg, "0003_requests")
+    with db_engine.connect() as conn:
+        assert conn.execute(text("SELECT to_regclass('public.assignments')")).scalar() is None
+        assert conn.execute(text("SELECT to_regclass('public.idempotency_keys')")).scalar() is None
+        assert conn.execute(text("SELECT to_regclass('public.service_requests')")).scalar()
+        assert (
+            conn.execute(
+                text("SELECT count(*) FROM pg_proc WHERE proname = 'forbid_assignment_delete'")
+            ).scalar()
+            == 0
+        )
+    command.upgrade(cfg, "head")
+    with db_engine.connect() as conn:
+        assert conn.execute(text("SELECT to_regclass('public.assignments')")).scalar()
+        names = set(
+            conn.execute(
+                text("SELECT conname FROM pg_constraint WHERE conrelid = 'assignments'::regclass")
+            ).scalars()
+        )
+        assert "ex_assignments_technician_no_overlap" in names
+        assert (
+            conn.execute(
+                text(
+                    "SELECT contype FROM pg_constraint "
+                    "WHERE conname = 'ex_assignments_technician_no_overlap'"
+                )
+            ).scalar()
+            == "x"
+        )
+        assert (
+            conn.execute(
+                text(
+                    "SELECT count(*) FROM pg_indexes "
+                    "WHERE indexname = 'uq_assignments_one_active_per_request'"
+                )
+            ).scalar()
+            == 1
+        )
+    # drift check stays clean after the round trip
+    test_models_match_migrations(migrated_db, db_engine)
