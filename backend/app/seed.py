@@ -5,6 +5,9 @@ re-running never duplicates or overwrites data. All demo passwords are the dispo
 string below; never use this in production.
 """
 
+import hashlib
+import io
+import os
 import uuid
 from dataclasses import dataclass
 from datetime import UTC, date, datetime, time, timedelta
@@ -12,6 +15,7 @@ from decimal import Decimal
 from typing import Any
 from zoneinfo import ZoneInfo
 
+from PIL import Image, ImageDraw
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
@@ -25,6 +29,8 @@ from app.models import (
     CategoryRequiredSkill,
     Estimate,
     EstimateLine,
+    EvidenceFile,
+    Feedback,
     Holiday,
     InventoryItem,
     MaintenancePlan,
@@ -49,6 +55,7 @@ from app.models import (
 from app.models.enums import (
     AssignmentStatus,
     EstimateStatus,
+    FilePurpose,
     NoteKind,
     NoteVisibility,
     Priority,
@@ -56,6 +63,7 @@ from app.models.enums import (
     RequestStatus,
     StockMovementKind,
 )
+from app.services.files import upload_root
 from app.sla.service import recompute_all
 
 DEMO_PASSWORD = "demo1234"  # noqa: S105 - disposable demo credential, documented
@@ -66,6 +74,441 @@ R = MembershipRole
 
 def uid(*parts: str) -> uuid.UUID:
     return uuid.uuid5(NAMESPACE, ":".join(parts))
+
+
+def _bday(today: date, offset: int) -> date:
+    """Business day ``offset`` days from ``today`` (0 = today, or next Monday on weekends)."""
+    d, step = today, (1 if offset > 0 else -1)
+    for _ in range(abs(offset)):
+        d += timedelta(days=step)
+        while d.weekday() >= 5:
+            d += timedelta(days=step)
+    while d.weekday() >= 5:
+        d += timedelta(days=1)
+    return d
+
+
+def _local(tz: ZoneInfo, d: date, hour: int, minute: int = 0) -> datetime:
+    return datetime.combine(d, time(hour, minute), tzinfo=tz).astimezone(UTC)
+
+
+def make_image(label: str, fmt: str) -> bytes:
+    """Small deterministic PNG/JPEG: a solid colour derived from ``label`` plus simple shapes."""
+    h = hashlib.sha256(label.encode()).digest()
+    bg = (60 + h[0] % 120, 60 + h[1] % 120, 60 + h[2] % 120)
+    img = Image.new("RGB", (320, 240), bg)
+    d = ImageDraw.Draw(img)
+    x0, y0 = 20 + h[3] % 60, 20 + h[4] % 50
+    d.rectangle((x0, y0, x0 + 120, y0 + 80), fill=(240, 240, 240), outline=(20, 20, 20), width=3)
+    d.ellipse((180 + h[5] % 40, 110 + h[6] % 40, 280, 210), fill=(h[7], h[8], h[9]))
+    d.line((10, 230, 310, 10 + h[10] % 40), fill=(255, 255, 255), width=4)
+    buf = io.BytesIO()
+    if fmt == "JPEG":
+        img.save(buf, format="JPEG", quality=80)
+    else:
+        img.save(buf, format="PNG")
+    return buf.getvalue()
+
+
+@dataclass(frozen=True)
+class Bulk:
+    """One extra seeded request (see ``Seeder.seed_history``)."""
+
+    key: str
+    pidx: int
+    asset_n: int | None
+    category: str
+    title: str
+    priority: Priority
+    final: RequestStatus
+    tech: str | None = None  # technician key; None = unassigned
+    day: int = 0  # business-day offset of the assignment slot (negative = past)
+    hour: int = 13
+    minutes: int = 60
+    who: str = "requester1"
+    created_day: int | None = None  # business-day offset of creation; default = day - 1
+    rating: int | None = None
+    comment: str | None = None
+    intake: int = 0  # number of INTAKE images
+    completion_image: bool = False  # COMPLETION image on finished jobs
+
+
+_S, _P = RequestStatus, Priority
+# 12 finished jobs spread over the previous ~14 days (+ the same asset several times), then
+# open / future / canceled / reopened requests. All slots are inside business hours (09-18).
+BULK: tuple[Bulk, ...] = (
+    Bulk(
+        "h01",
+        0,
+        1,
+        "HVAC",
+        "Replace fan belt on the rooftop AC",
+        _P.HIGH,
+        _S.CLOSED,
+        "technician3",
+        -1,
+        16,
+        90,
+        "requester1",
+        rating=5,
+        comment="Fast and tidy.",
+        completion_image=True,
+    ),
+    Bulk(
+        "h02",
+        1,
+        None,
+        "Plumbing",
+        "Repair leaking pipe joint in the basement",
+        _P.HIGH,
+        _S.COMPLETED,
+        "technician2",
+        -2,
+        13,
+        120,
+        "requester1",
+        rating=4,
+        comment="Fixed, small mess left behind.",
+        intake=1,
+        completion_image=True,
+    ),
+    Bulk(
+        "h03",
+        0,
+        None,
+        "Electrical",
+        "Replace faulty breaker in panel B",
+        _P.NORMAL,
+        _S.CLOSED,
+        "technician1",
+        -3,
+        13,
+        90,
+        "requester1",
+        rating=3,
+        completion_image=True,
+    ),
+    Bulk(
+        "h04",
+        3,
+        1,
+        "HVAC",
+        "Clean condenser coils",
+        _P.NORMAL,
+        _S.CLOSED,
+        "technician3",
+        -3,
+        16,
+        60,
+        "requester3",
+        rating=5,
+        completion_image=True,
+    ),
+    Bulk(
+        "h05",
+        3,
+        None,
+        "General maintenance",
+        "Adjust the sticking lobby door",
+        _P.LOW,
+        _S.COMPLETED,
+        "technician4",
+        -4,
+        13,
+        60,
+        "requester3",
+        completion_image=True,
+    ),
+    Bulk(
+        "h06",
+        4,
+        2,
+        "General maintenance",
+        "Annual boiler inspection",
+        _P.NORMAL,
+        _S.CLOSED,
+        "technician4",
+        -4,
+        15,
+        90,
+        "requester3",
+        rating=4,
+        comment="Report was clear.",
+    ),
+    Bulk(
+        "h07",
+        1,
+        1,
+        "HVAC",
+        "Rooftop AC compressor noise",
+        _P.HIGH,
+        _S.COMPLETED,
+        "technician3",
+        -5,
+        16,
+        120,
+        "requester1",
+        rating=2,
+        comment="Noise returned later.",
+        intake=2,
+        completion_image=True,
+    ),
+    Bulk(
+        "h08",
+        0,
+        1,
+        "HVAC",
+        "Rooftop AC thermostat recalibration",
+        _P.NORMAL,
+        _S.CLOSED,
+        "technician3",
+        -7,
+        16,
+        60,
+        "requester1",
+        rating=5,
+        completion_image=True,
+    ),
+    Bulk(
+        "h09",
+        5,
+        None,
+        "Electrical",
+        "Install emergency exit lighting",
+        _P.HIGH,
+        _S.CLOSED,
+        "technician1",
+        -6,
+        13,
+        120,
+        "requester3",
+        rating=4,
+        completion_image=True,
+    ),
+    Bulk(
+        "h10",
+        4,
+        None,
+        "Plumbing",
+        "Replace washroom tap",
+        _P.LOW,
+        _S.COMPLETED,
+        "technician2",
+        -8,
+        13,
+        60,
+        "requester3",
+    ),
+    Bulk(
+        "h11",
+        1,
+        None,
+        "Electrical",
+        "Rewire the break-room outlets",
+        _P.NORMAL,
+        _S.CLOSED,
+        "technician1",
+        -9,
+        13,
+        120,
+        "requester1",
+        rating=3,
+        comment="Took longer than planned.",
+    ),
+    Bulk(
+        "h12",
+        5,
+        2,
+        "General maintenance",
+        "Boiler pressure valve replacement",
+        _P.HIGH,
+        _S.CLOSED,
+        "technician4",
+        -10,
+        13,
+        120,
+        "requester3",
+        rating=5,
+        completion_image=True,
+    ),
+    Bulk(
+        "o01",
+        3,
+        None,
+        "Electrical",
+        "Flickering lights in room 12",
+        _P.NORMAL,
+        _S.SUBMITTED,
+        who="requester3",
+        created_day=-1,
+        intake=1,
+    ),
+    Bulk(
+        "o02",
+        4,
+        None,
+        "Plumbing",
+        "Toilet keeps running",
+        _P.LOW,
+        _S.SUBMITTED,
+        who="requester3",
+        created_day=-2,
+    ),
+    Bulk(
+        "o03",
+        1,
+        None,
+        "HVAC",
+        "No heating in the east wing",
+        _P.HIGH,
+        _S.SUBMITTED,
+        who="requester1",
+        created_day=-1,
+        intake=2,
+    ),
+    Bulk(
+        "o04",
+        5,
+        None,
+        "General maintenance",
+        "Broken window latch",
+        _P.NORMAL,
+        _S.SUBMITTED,
+        who="requester3",
+        created_day=-3,
+    ),
+    Bulk(
+        "o05",
+        0,
+        None,
+        "Plumbing",
+        "Low water pressure on the 3rd floor",
+        _P.HIGH,
+        _S.TRIAGED,
+        who="requester1",
+        created_day=-2,
+    ),
+    Bulk(
+        "o06",
+        3,
+        2,
+        "General maintenance",
+        "Boiler making a knocking noise",
+        _P.NORMAL,
+        _S.TRIAGED,
+        who="requester3",
+        created_day=-4,
+    ),
+    Bulk(
+        "o07",
+        5,
+        None,
+        "Electrical",
+        "Replace parking-lot floodlights",
+        _P.LOW,
+        _S.TRIAGED,
+        who="requester3",
+        created_day=-5,
+    ),
+    Bulk(
+        "o08",
+        4,
+        None,
+        "Electrical",
+        "Install new sockets in office 4",
+        _P.NORMAL,
+        _S.SCHEDULED,
+        "technician1",
+        4,
+        11,
+        90,
+        "requester3",
+        created_day=-1,
+    ),
+    Bulk(
+        "o09",
+        1,
+        2,
+        "General maintenance",
+        "Boiler gasket replacement",
+        _P.HIGH,
+        _S.SCHEDULED,
+        "technician4",
+        2,
+        10,
+        120,
+        "requester1",
+        created_day=-1,
+    ),
+    Bulk(
+        "o10",
+        3,
+        1,
+        "HVAC",
+        "Quarterly AC service",
+        _P.NORMAL,
+        _S.ACCEPTED,
+        "technician3",
+        5,
+        10,
+        120,
+        "requester3",
+        created_day=-1,
+    ),
+    Bulk(
+        "o11",
+        0,
+        None,
+        "Plumbing",
+        "Replace the kitchen mixer tap",
+        _P.NORMAL,
+        _S.IN_PROGRESS,
+        "technician2",
+        0,
+        9,
+        120,
+        "requester1",
+        created_day=-1,
+        intake=1,
+    ),
+    Bulk(
+        "o12",
+        5,
+        None,
+        "Electrical",
+        "Duplicate: floodlight request",
+        _P.LOW,
+        _S.CANCELED,
+        who="requester3",
+        created_day=-5,
+    ),
+    Bulk(
+        "o13",
+        1,
+        None,
+        "General maintenance",
+        "Resolved by the tenant",
+        _P.LOW,
+        _S.CANCELED,
+        who="requester1",
+        created_day=-6,
+    ),
+    Bulk(
+        "o14",
+        4,
+        None,
+        "Plumbing",
+        "Washroom tap still dripping",
+        _P.NORMAL,
+        _S.REOPENED,
+        "technician2",
+        -3,
+        15,
+        60,
+        "requester3",
+        created_day=-4,
+    ),
+)
 
 
 @dataclass(frozen=True)
@@ -87,9 +530,19 @@ ORGS = (
             ("Northwind HQ Tower", "12 Chuy Ave, Bishkek"),
             ("Riverside Mall", "88 Sovetskaya St, Bishkek"),
             ("Eastside Warehouse", "5 Industrial Rd, Bishkek"),
+            ("Parkview Residences", "17 Gorky St, Bishkek"),
+            ("Dordoi Logistics Hub", "2 Dordoi Rd, Bishkek"),
+            ("Central Library Annex", "9 Erkindik Blvd, Bishkek"),
         ),
         # requester2 has no grants (empty state). Property 0 is shared by requester1 + shared user.
-        {0: ("requester1", "shared"), 1: ("requester1",), 2: ("shared",)},
+        {
+            0: ("requester1", "shared"),
+            1: ("requester1",),
+            2: ("shared",),
+            3: ("requester3",),
+            4: ("requester3",),
+            5: ("requester3",),
+        },
     ),
     OrgSpec(
         "alatoo",
@@ -99,8 +552,18 @@ ORGS = (
             ("Ala-Too Business Centre", "21 Manas Ave, Bishkek"),
             ("Orto-Sai Apartments", "3 Orto-Sai St, Bishkek"),
             ("Vostok Clinic", "40 Toktogul St, Bishkek"),
+            ("Chui Plaza Offices", "100 Chui Ave, Bishkek"),
+            ("Ak-Orgo Cold Storage", "7 Ak-Orgo Rd, Bishkek"),
+            ("Jal Community Centre", "55 Jal St, Bishkek"),
         ),
-        {0: ("requester1", "requester2"), 1: ("requester1",), 2: ("requester2",)},
+        {
+            0: ("requester1", "requester2"),
+            1: ("requester1",),
+            2: ("requester2",),
+            3: ("requester3",),
+            4: ("requester3",),
+            5: ("requester3",),
+        },
     ),
 )
 
@@ -116,6 +579,8 @@ INVENTORY = (
     ("HINGE-HD", "Heavy-duty door hinge", "pcs", "8", "4", 12000),
     ("SEALANT-SIL", "Silicone sealant tube", "tube", "2", "3", 9500),  # race demo item
     ("THERMOSTAT-DGT", "Digital thermostat", "pcs", "5", "2", 95000),
+    ("PAINT-WHT-5L", "White interior paint 5 L", "can", "9", "3", 68000),
+    ("BATTERY-9V", "9 V battery (smoke detector)", "pcs", "40", "15", 3500),
 )
 # (key, asset code suffix, category, title, priority, recurrence, first_date offset in days from
 # the first seed run, enabled). Org -> plans. SEED-03: some already due, one disabled.
@@ -171,6 +636,13 @@ USAGE = {
     "i": ("technician3", (("FILTER-HVAC-M", "2"),)),
     "k": ("technician1", (("SOCKET-16A", "1"), ("CABLE-2.5", "6.5"))),
     "l": ("technician2", (("VALVE-BALL-15", "1"), ("SEALANT-SIL", "1"))),
+    # history jobs (seed_history)
+    "h02": ("technician2", (("PIPE-CU-15", "2.5"), ("VALVE-BALL-15", "1"))),
+    "h03": ("technician1", (("BREAKER-16A", "1"),)),
+    "h07": ("technician3", (("FILTER-HVAC-M", "1"),)),
+    "h09": ("technician1", (("LED-BULB-12W", "4"), ("CABLE-2.5", "12"))),
+    "h11": ("technician1", (("SOCKET-16A", "3"), ("CABLE-2.5", "20"))),
+    "h12": ("technician4", (("THERMOSTAT-DGT", "1"), ("HINGE-HD", "1"))),
 }
 
 SKILLS = ("electrical", "plumbing", "hvac", "general")
@@ -184,6 +656,7 @@ TECH_SKILLS = {
     "technician1": ("electrical", "general"),
     "technician2": ("plumbing", "general"),
     "technician3": ("hvac", "general"),
+    "technician4": ("electrical", "plumbing", "general"),
 }
 PEOPLE = (
     ("admin", "Admin", R.ADMIN),
@@ -191,8 +664,10 @@ PEOPLE = (
     ("technician1", "Technician One", R.TECHNICIAN),
     ("technician2", "Technician Two", R.TECHNICIAN),
     ("technician3", "Technician Three", R.TECHNICIAN),
+    ("technician4", "Technician Four", R.TECHNICIAN),
     ("requester1", "Requester One", R.REQUESTER),
     ("requester2", "Requester Two", R.REQUESTER),
+    ("requester3", "Requester Three", R.REQUESTER),
 )
 
 
@@ -209,6 +684,12 @@ class Seeder:
             self.db.add(obj)
             self.db.flush()
         return obj
+
+    def _anchor(self, org: Organization) -> date:
+        """Single time anchor of the seed: the org-local date the organization row was created.
+
+        Stored with the data, so a re-run on a later day derives identical timestamps."""
+        return org.created_at.astimezone(ZoneInfo(org.timezone)).date()
 
     def password_hash(self) -> str:
         if self._pw_hash is None:
@@ -362,6 +843,8 @@ class Seeder:
                 )
         self.seed_requests(org, spec, members)
         self.seed_jobs(org, spec, members)
+        self.seed_history(org, spec, members)
+        self.seed_files_feedback(org, spec, members)
         self.seed_inventory(org, spec, members)
         self.seed_estimates(org, spec, members)
         self.seed_notifications(org, spec, members)
@@ -515,18 +998,10 @@ class Seeder:
         """
         S, P, N, A = RequestStatus, Priority, NoteKind, AssignmentStatus
         tz = ZoneInfo(org.timezone)
-        today = datetime.now(tz).date()
+        today = self._anchor(org)
 
         def bday(offset: int) -> date:
-            """Business day ``offset`` days from today (0 = today, or next Monday on weekends)."""
-            d, step = today, (1 if offset > 0 else -1)
-            for _ in range(abs(offset)):
-                d += timedelta(days=step)
-                while d.weekday() >= 5:
-                    d += timedelta(days=step)
-            while d.weekday() >= 5:
-                d += timedelta(days=1)
-            return d
+            return _bday(today, offset)
 
         def slot(d: date, hour: int, minutes: int, minute: int = 0) -> tuple[datetime, datetime]:
             start = datetime.combine(d, time(hour, minute), tzinfo=tz).astimezone(UTC)
@@ -746,6 +1221,251 @@ class Seeder:
             req.status = RequestStatus.TRIAGED
             self.db.flush()
 
+    # ---- extra history / pipeline requests, files, feedback (Phase 3d) ---------------------
+    def seed_history(
+        self, org: Organization, spec: OrgSpec, members: dict[str, Membership]
+    ) -> None:
+        """BULK requests: finished jobs over the last ~14 days (assignments in business hours,
+        completion images, feedback), plus open / future / canceled / reopened ones.
+
+        Everything is timestamped from the org anchor date (see ``_anchor``) and inserted row by
+        row like the rest of the seed, skipped when the deterministic id already exists."""
+        S, N = RequestStatus, NoteKind
+        tz = ZoneInfo(org.timezone)
+        today = self._anchor(org)
+        disp = members["dispatcher"]
+        prefix = spec.key[:2].upper()
+        ladder = [S.TRIAGED, S.SCHEDULED, S.ACCEPTED, S.IN_PROGRESS, S.COMPLETED]
+        for idx, b in enumerate(BULK):
+            rid = uid("request", spec.key, b.key)
+            if self.db.get(ServiceRequest, rid) is not None:
+                continue
+            requester = members[b.who]
+            tech = members[b.tech] if b.tech else None
+            created_off = b.created_day if b.created_day is not None else b.day - 1
+            t0 = _local(tz, _bday(today, created_off), 9 + idx % 6, (idx * 7) % 60)
+            w0 = w1 = t0  # no slot for unassigned requests
+            if tech is not None:
+                w0 = _local(tz, _bday(today, b.day), b.hour)
+                w1 = w0 + timedelta(minutes=b.minutes)
+            asset_id = (
+                uid("asset", spec.key, f"{prefix}-P{b.pidx + 1}-{b.asset_n:02d}")
+                if b.asset_n
+                else None
+            )
+            req = self._new_request(
+                org, spec, requester, rid, b.pidx, b.category, b.title, b.priority,
+                at=t0, asset_id=asset_id,
+            )  # fmt: skip
+            times = {
+                S.TRIAGED: t0 + timedelta(minutes=25),
+                S.SCHEDULED: t0 + timedelta(minutes=50),
+                S.ACCEPTED: t0 + timedelta(minutes=120),
+                S.IN_PROGRESS: w0,
+                S.COMPLETED: w1,
+            }
+            steps: list[tuple[RequestStatus, Membership, datetime]] = []
+            if b.final == S.CANCELED:
+                steps.append((S.CANCELED, requester, t0 + timedelta(hours=3)))
+            else:
+                last = S.COMPLETED if b.final in (S.CLOSED, S.REOPENED) else b.final
+                if b.final != S.SUBMITTED:
+                    for st in ladder[: ladder.index(last) + 1]:
+                        actor = disp if st in (S.TRIAGED, S.SCHEDULED) or tech is None else tech
+                        steps.append((st, actor, times[st]))
+                if b.final == S.CLOSED:
+                    steps.append((S.CLOSED, requester, w1 + timedelta(minutes=90)))
+                if b.final == S.REOPENED:
+                    steps.append((S.REOPENED, requester, w1 + timedelta(hours=20)))
+            current = S.SUBMITTED
+            aid = uid("assignment", spec.key, b.key)
+            done = b.final in (S.COMPLETED, S.CLOSED, S.REOPENED)
+            for to, actor, at in steps:
+                note = None
+                if to == S.TRIAGED:
+                    note = self._note(
+                        org, req, disp, NoteVisibility.INTERNAL, N.TRIAGE,
+                        "Needs a technician visit.", at,
+                    )  # fmt: skip
+                elif to == S.COMPLETED:
+                    note = self._note(
+                        org, req, actor, NoteVisibility.PUBLIC, N.COMPLETION,
+                        "Work finished, tested and the area cleaned up.", at,
+                    )  # fmt: skip
+                elif to == S.CLOSED:
+                    note = self._note(
+                        org, req, actor, NoteVisibility.PUBLIC, N.CLOSE, "Confirmed, thank you.", at
+                    )
+                elif to == S.REOPENED:
+                    note = self._note(
+                        org, req, actor, NoteVisibility.PUBLIC, N.REWORK,
+                        "The problem is back, please check again.", at,
+                    )  # fmt: skip
+                elif to == S.CANCELED:
+                    note = self._note(
+                        org, req, actor, NoteVisibility.PUBLIC, N.CANCEL,
+                        "No longer needed, cancel this one.", at,
+                    )  # fmt: skip
+                data: dict[str, Any] = {"note_id": note.id} if note else {}
+                if to == S.SCHEDULED:
+                    if tech is None:
+                        raise RuntimeError("scheduled seed row needs a technician and a slot")
+                    self.db.add(
+                        Assignment(
+                            id=aid,
+                            organization_id=org.id,
+                            request_id=req.id,
+                            technician_membership_id=tech.id,
+                            start_at=w0,
+                            end_at=w1,
+                            status=AssignmentStatus.COMPLETED if done else AssignmentStatus.ACTIVE,
+                            active=not done,
+                            assigned_by_membership_id=disp.id,
+                            created_at=at,
+                        )
+                    )
+                    self.db.flush()
+                    self._event(
+                        org, req, disp, "ASSIGNED", None, None,
+                        {
+                            "assignment_id": str(aid),
+                            "technician": {
+                                "membership_id": str(tech.id),
+                                "name": f"Technician ({spec.name})",
+                            },
+                            "start_at": w0.isoformat(),
+                            "end_at": w1.isoformat(),
+                            "reason": None,
+                        },
+                        at=at,
+                    )  # fmt: skip
+                    data["assignment_id"] = aid
+                self._event(org, req, actor, "STATUS_CHANGED", current, to, data or None, at=at)
+                current = to
+                req.completed_at = at if to == S.COMPLETED else req.completed_at
+                if to == S.CLOSED:
+                    req.closed_at = at
+                if to == S.CANCELED:
+                    req.canceled_at = at
+                req.status_changed_at = at
+                req.updated_at = at
+            req.status = b.final
+            self.db.flush()
+            for n in range(b.intake):
+                self._evidence(
+                    org, req, requester, FilePurpose.INTAKE, n, t0 + timedelta(minutes=2 + n)
+                )
+            if done and b.completion_image and tech is not None:
+                self._evidence(
+                    org, req, tech, FilePurpose.COMPLETION, 0, w1 - timedelta(minutes=10)
+                )
+            if b.rating is not None and req.completed_at is not None:
+                end = req.closed_at or req.completed_at
+                self._feedback(org, req, requester, b.rating, b.comment, end + timedelta(hours=2))
+
+    def _evidence(
+        self,
+        org: Organization,
+        req: ServiceRequest,
+        uploader: Membership,
+        purpose: FilePurpose,
+        n: int,
+        at: datetime,
+    ) -> EvidenceFile:
+        """Create (or heal) one evidence file: real PNG/JPEG bytes at the same storage key
+        layout the upload endpoint uses (``<org>/<YYYY>/<MM>/<file id>.<ext>``)."""
+        fid = uid("file", org.slug, str(req.id), purpose.value, str(n))
+        label = f"{org.slug}:{req.number}:{purpose.value}:{n}"
+        row = self.db.get(EvidenceFile, fid)
+        if row is None:
+            fmt, ext, mime = ("JPEG", "jpg", "image/jpeg") if n % 2 else ("PNG", "png", "image/png")
+            data = make_image(label, fmt)
+            key = f"{org.id}/{at:%Y}/{at:%m}/{fid}.{ext}"
+            row = EvidenceFile(
+                id=fid,
+                organization_id=org.id,
+                request_id=req.id,
+                uploaded_by_membership_id=uploader.id,
+                purpose=purpose,
+                original_filename=f"{purpose.value.lower()}-{req.number}-{n + 1}.{ext}",
+                storage_key=key,
+                mime_type=mime,
+                size_bytes=len(data),
+                width=320,
+                height=240,
+                sha256=hashlib.sha256(data).hexdigest(),
+                created_at=at,
+            )
+            self.db.add(row)
+            self.db.flush()
+            self._event(
+                org, req, uploader, "FILE_UPLOADED", None, None,
+                {"file_id": str(fid), "purpose": purpose.value, "mime_type": mime},
+                at=at,
+            )  # fmt: skip
+        path = upload_root() / row.storage_key
+        if not path.exists():  # also heals a wiped upload directory on re-run
+            fmt = "JPEG" if row.mime_type == "image/jpeg" else "PNG"
+            path.parent.mkdir(parents=True, exist_ok=True)
+            tmp = path.with_suffix(path.suffix + ".part")
+            tmp.write_bytes(make_image(label, fmt))
+            os.replace(tmp, path)
+        return row
+
+    def _feedback(
+        self,
+        org: Organization,
+        req: ServiceRequest,
+        requester: Membership,
+        rating: int,
+        comment: str | None,
+        at: datetime,
+    ) -> None:
+        fid = uid("feedback", org.slug, str(req.id))
+        if self.db.get(Feedback, fid) is not None:
+            return
+        self.db.add(
+            Feedback(
+                id=fid,
+                organization_id=org.id,
+                request_id=req.id,
+                requester_membership_id=requester.id,
+                rating=rating,
+                comment=comment,
+                created_at=at,
+            )
+        )
+        self.db.flush()
+        self._event(
+            org, req, requester, "FEEDBACK_SUBMITTED", None, None, {"rating": rating}, at=at
+        )
+
+    def seed_files_feedback(
+        self, org: Organization, spec: OrgSpec, members: dict[str, Membership]
+    ) -> None:
+        """Images and feedback for the Phase 2 requests: intake on "a", completion on "k"/"l"."""
+        rq = members["requester1"]
+
+        def get(key: str) -> ServiceRequest | None:
+            return self.db.get(ServiceRequest, uid("request", spec.key, key))
+
+        a = get("a")
+        if a is not None:
+            self._evidence(org, a, rq, FilePurpose.INTAKE, 0, a.created_at + timedelta(minutes=2))
+        for key, tech_key, rating, comment in (
+            ("k", "technician1", 5, "Socket works, thanks."),
+            ("l", "technician2", 4, None),
+        ):
+            req = get(key)
+            if req is None or req.completed_at is None:
+                continue
+            self._evidence(
+                org, req, members[tech_key], FilePurpose.COMPLETION, 0,
+                req.completed_at - timedelta(minutes=10),
+            )  # fmt: skip
+            at = (req.closed_at or req.completed_at) + timedelta(hours=1)
+            self._feedback(org, req, rq, rating, comment, at)
+
     # ---- inventory + material usage (Phase 3a) ------------------------------------------
     def seed_inventory(
         self, org: Organization, spec: OrgSpec, members: dict[str, Membership]
@@ -786,6 +1506,8 @@ class Seeder:
                     admin,
                     initial,
                     uid("mv", spec.key, code, "initial"),
+                    None,
+                    _local(ZoneInfo(org.timezone), self._anchor(org) - timedelta(days=21), 8),
                 )
             items[code] = item
         for rkey, (tech_key, lines) in USAGE.items():
@@ -793,6 +1515,10 @@ class Seeder:
             if self.db.get(ServiceRequest, req_id) is None:
                 continue
             tech = members[tech_key]
+            req_row = self.db.get(ServiceRequest, req_id)
+            done_at = req_row.completed_at if req_row else None
+            used_at = done_at - timedelta(minutes=20) if done_at else None
+            stamp = {"created_at": used_at} if used_at else {}
             for code, qty_s in lines:
                 cmd = uid("usage", spec.key, rkey, code)
                 if self.db.scalar(text("SELECT 1 FROM material_usage WHERE id = :i"), {"i": cmd}):
@@ -811,6 +1537,7 @@ class Seeder:
                         total_cost_minor=total,
                         client_command_id=cmd,
                         payload_hash=_usage_hash(req_id, item.id, qty),
+                        **stamp,
                     )
                 )
                 self.db.flush()
@@ -826,6 +1553,7 @@ class Seeder:
                     running,
                     uid("mv", spec.key, rkey, code),
                     cmd,
+                    used_at,
                 )
 
     def _balance(self, item_id: uuid.UUID) -> Decimal:
@@ -834,7 +1562,9 @@ class Seeder:
             {"i": item_id},
         ).scalar_one()
 
-    def _movement(self, org, item, kind, delta, reason, actor, after, mid, usage_id=None) -> None:
+    def _movement(
+        self, org, item, kind, delta, reason, actor, after, mid, usage_id=None, at=None
+    ) -> None:
         self.db.add(
             StockMovement(
                 id=mid,
@@ -846,6 +1576,7 @@ class Seeder:
                 actor_membership_id=actor.id,
                 material_usage_id=usage_id,
                 stock_after=after,
+                **({"created_at": at} if at else {}),
             )
         )
         self.db.flush()
@@ -865,6 +1596,7 @@ class Seeder:
         supersedes: Estimate | None = None,
         notes: str | None = None,
         reason: str | None = None,
+        at: datetime | None = None,
     ) -> Estimate | None:
         """Insert one estimate version (DRAFT first so its lines can be written, then moved to
         ``final`` via status-only updates) with totals computed by the money helpers."""
@@ -878,7 +1610,8 @@ class Seeder:
         labor = money.labor_cost_minor(labor_minutes, rate)
         line_rows = [(d, Decimal(q), p, money.line_total_minor(Decimal(q), p)) for d, q, p in lines]
         materials = sum(r[3] for r in line_rows)
-        now = datetime.now(UTC)
+        now = at or datetime.now(UTC)
+        decided_at = now + timedelta(hours=1) if at else now
         est = Estimate(
             id=eid,
             organization_id=org.id,
@@ -920,7 +1653,7 @@ class Seeder:
             }
             est.status = EstimateStatus.AWAITING_APPROVAL
             self.db.flush()
-            self._event(org, req, disp, "ESTIMATE_SUBMITTED", None, None, data)
+            self._event(org, req, disp, "ESTIMATE_SUBMITTED", None, None, data, at=now)
             if final in (
                 EstimateStatus.APPROVED,
                 EstimateStatus.REJECTED,
@@ -933,7 +1666,7 @@ class Seeder:
                     else EstimateStatus.REJECTED
                 )
                 est.status = decided
-                est.decided_at, est.decided_by_membership_id = now, req1.id
+                est.decided_at, est.decided_by_membership_id = decided_at, req1.id
                 est.decision_reason = reason
                 self.db.flush()
                 self._event(
@@ -944,6 +1677,7 @@ class Seeder:
                     None,
                     None,
                     {"estimate_id": str(eid), "version": version, "reason": reason},
+                    at=decided_at,
                 )
             if final == EstimateStatus.SUPERSEDED:
                 est.status = EstimateStatus.SUPERSEDED
@@ -1018,6 +1752,42 @@ class Seeder:
             supersedes=v1,
             notes="Scope reduced after v1.",
         )
+        # History: approved estimates dated within the last 30 days (REPORT revenue figures)
+        approved = (
+            ("h02", 120, 50000, (("Copper pipe 15 mm", "2.5", 45000), ("Ball valve", "1", 38000))),
+            ("h07", 120, 55000, (("Chiller air filter (M)", "1", 125000),)),
+            ("h12", 120, 60000, (("Digital thermostat", "1", 95000), ("Hinge", "1", 12000))),
+        )
+        for rkey, minutes, rate, lines in approved:
+            req = self.db.get(ServiceRequest, uid("request", spec.key, rkey))
+            if req is not None:
+                self._estimate(
+                    org,
+                    spec,
+                    members,
+                    rkey,
+                    1,
+                    ES.APPROVED,
+                    minutes,
+                    rate,
+                    lines,
+                    at=req.created_at + timedelta(hours=3),
+                )
+        o06 = self.db.get(ServiceRequest, uid("request", spec.key, "o06"))
+        if o06 is not None:
+            self._estimate(
+                org,
+                spec,
+                members,
+                "o06",
+                1,
+                ES.REJECTED,
+                180,
+                60000,
+                (("Boiler pump", "1", 210000),),
+                reason="Too expensive; get a second quote.",
+                at=o06.created_at + timedelta(hours=5),
+            )
         self.db.flush()
 
     # ---- notifications (Phase 3a) ---------------------------------------------------------
@@ -1129,7 +1899,7 @@ class Seeder:
 
         Dates are anchored to the local date of the FIRST seed run (rows are skipped on re-runs)."""
         tz = ZoneInfo(org.timezone)
-        today = datetime.now(tz).date()
+        today = self._anchor(org)
         holiday_id = uid("holiday", spec.key)
         if self.db.get(Holiday, holiday_id) is None:
             self.db.add(
@@ -1187,7 +1957,17 @@ class Seeder:
         self.db.flush()
 
     def _new_request(
-        self, org, spec, requester, rid, pidx, cat, title, prio, at=None
+        self,
+        org,
+        spec,
+        requester,
+        rid,
+        pidx,
+        cat,
+        title,
+        prio,
+        at=None,
+        asset_id=None,
     ) -> ServiceRequest:
         number = self.db.execute(
             text(
@@ -1196,6 +1976,7 @@ class Seeder:
             ),
             {"o": org.id},
         ).scalar_one()
+        stamps = {"created_at": at, "updated_at": at, "status_changed_at": at} if at else {}
         req = self.ensure(
             ServiceRequest,
             rid,
@@ -1205,11 +1986,13 @@ class Seeder:
             requester_membership_id=requester.id,
             created_by_membership_id=requester.id,
             property_id=uid("prop", spec.key, str(pidx)),
+            asset_id=asset_id,
             category_id=uid("cat", spec.key, cat),
             title=title,
             description="Reported by the tenant; the problem needs a technician visit soon.",
             priority=prio,
             status=RequestStatus.SUBMITTED,
+            **stamps,
         )
         self._event(
             org,
@@ -1238,8 +2021,9 @@ class Seeder:
         )
         self.db.flush()
 
-    def _note(self, org, req, author, visibility, kind, body) -> WorkNote:
+    def _note(self, org, req, author, visibility, kind, body, at=None) -> WorkNote:
         note = WorkNote(
+            **({"created_at": at} if at is not None else {}),
             organization_id=org.id,
             request_id=req.id,
             author_membership_id=author.id,
@@ -1257,6 +2041,7 @@ class Seeder:
             None,
             None,
             {"note_id": str(note.id), "visibility": visibility.value, "kind": kind.value},
+            at=at,
         )
         return note
 
@@ -1269,6 +2054,55 @@ def seed(db: Session) -> list[tuple[str, str, str]]:
     recompute_all(db)  # SLA cache of every seeded request, derived from its events
     db.commit()
     return s.credentials
+
+
+SUMMARY_ENTITIES = (
+    ("requesters", "memberships WHERE role = 'REQUESTER'"),
+    ("dispatchers", "memberships WHERE role = 'DISPATCHER'"),
+    ("admins", "memberships WHERE role = 'ADMIN'"),
+    ("technicians", "memberships WHERE role = 'TECHNICIAN'"),
+    ("properties", "properties"),
+    ("assets", "assets"),
+    ("service categories", "service_categories"),
+    ("inventory items", "inventory_items"),
+    ("low-stock items", "inventory_items WHERE stock_quantity <= reorder_threshold"),
+    ("service requests", "service_requests"),
+    ("assignments", "assignments"),
+    ("estimates", "estimates"),
+    ("attachments", "evidence_files"),
+    ("feedback", "feedback"),
+    ("material usage", "material_usage"),
+    ("maintenance plans", "maintenance_plans"),
+)
+
+
+def summary(db: Session) -> dict[str, dict[str, int]]:
+    """Counts per entity per organization (name -> entity -> count)."""
+    out: dict[str, dict[str, int]] = {}
+    for org_id, name in db.execute(text("SELECT id, name FROM organizations ORDER BY name")).all():
+        out[name] = {
+            label: db.execute(
+                text(
+                    f"SELECT count(*) FROM {frm}"  # noqa: S608 - constant table list
+                    + (" AND" if "WHERE" in frm else " WHERE")
+                    + " organization_id = :o"
+                ),
+                {"o": org_id},
+            ).scalar_one()
+            for label, frm in SUMMARY_ENTITIES
+        }
+    return out
+
+
+def format_summary(data: dict[str, dict[str, int]]) -> str:
+    orgs = list(data)
+    labels = [lbl for lbl, _ in SUMMARY_ENTITIES]
+    w = max(len(x) for x in labels)
+    lines = [f"{'ENTITY':<{w}}  " + "  ".join(f"{o:>22}" for o in orgs) + "  " + f"{'TOTAL':>6}"]
+    for lbl in labels:
+        vals = [data[o][lbl] for o in orgs]
+        lines.append(f"{lbl:<{w}}  " + "  ".join(f"{v:>22}" for v in vals) + f"  {sum(vals):>6}")
+    return "\n".join(lines)
 
 
 def format_credentials(rows: list[tuple[str, str, str]]) -> str:

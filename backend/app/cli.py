@@ -2,20 +2,27 @@
 
 Extension points for later phases (add a subparser + handler for each):
   - seed                 load demo data (implemented)
-  - reset-demo           wipe and re-seed the demo organisations
+  - reset-demo           DESTRUCTIVE local wipe + re-seed (guarded)
   - sla-escalate         notify on overdue requests (idempotent)
   - generate-maintenance generate maintenance-plan requests (--as-of DATE)
 """
 
 import argparse
+import shutil
 import sys
 import time
 import uuid
 from collections.abc import Callable
 from datetime import UTC, date, datetime
+from pathlib import Path
 
+from alembic.config import Config as AlembicConfig
+from alembic.migration import MigrationContext
+from alembic.script import ScriptDirectory
 from sqlalchemy import text
+from sqlalchemy.engine import make_url
 
+from alembic import command as alembic_command
 from app.core.config import get_settings
 from app.db.session import build_engine
 
@@ -74,13 +81,122 @@ def _cmd_check_db(_: argparse.Namespace) -> int:
 
 def _cmd_seed(_: argparse.Namespace) -> int:
     from app.db.session import SessionLocal, get_engine
-    from app.seed import DEMO_PASSWORD, format_credentials, seed
+    from app.seed import DEMO_PASSWORD, format_credentials, format_summary, seed, summary
 
     get_engine()
     with SessionLocal() as db:
         rows = seed(db)
+        data = summary(db)
+    print(format_summary(data))
+    print("\nDISPOSABLE DEMO CREDENTIALS (local development only)")
     print(format_credentials(rows))
-    print(f"\nDisposable demo credentials only. Password for every account: {DEMO_PASSWORD}")
+    print(f"\nPassword for every account: {DEMO_PASSWORD}")
+    return 0
+
+
+LOCAL_DB_HOSTS = frozenset({"db", "localhost", "127.0.0.1", "::1"})
+RESET_ENVIRONMENTS = frozenset({"development", "test"})
+BACKEND_DIR = Path(__file__).resolve().parent.parent
+
+
+def reset_refusal(
+    environment: str, database_url: str, upload_dir: str, confirmed: bool
+) -> str | None:
+    """Why reset-demo must not run, or None when it is allowed."""
+    if not confirmed:
+        return "refusing: pass --yes-destroy-local-data to confirm this DESTRUCTIVE command"
+    if environment not in RESET_ENVIRONMENTS:
+        return f"refusing: ENVIRONMENT={environment!r} (allowed: development, test)"
+    host = make_url(database_url).host or ""
+    if host not in LOCAL_DB_HOSTS:
+        return f"refusing: database host {host!r} is not local (allowed: {sorted(LOCAL_DB_HOSTS)})"
+    if not upload_dir.strip() or Path(upload_dir).resolve() == Path("/"):
+        return f"refusing: unsafe UPLOAD_DIR {upload_dir!r}"
+    return None
+
+
+def _wipe_uploads(upload_dir: str) -> int:
+    root = Path(upload_dir).resolve()
+    removed = 0
+    if not root.is_dir():
+        return 0
+    for child in root.iterdir():
+        removed += sum(1 for p in child.rglob("*") if p.is_file()) if child.is_dir() else 1
+        shutil.rmtree(child) if child.is_dir() and not child.is_symlink() else child.unlink()
+    return removed
+
+
+def _alembic_config() -> AlembicConfig:
+    cfg = AlembicConfig(str(BACKEND_DIR / "alembic.ini"))
+    cfg.set_main_option("script_location", str(BACKEND_DIR / "alembic"))
+    return cfg
+
+
+def _cmd_migrate(_: argparse.Namespace) -> int:
+    alembic_command.upgrade(_alembic_config(), "head")
+    print("migrations at head")
+    return 0
+
+
+def _cmd_check_ready(_: argparse.Namespace) -> int:
+    url = get_settings().DATABASE_URL
+    err = _try_connect(url)
+    if err is not None:
+        print(f"NOT READY: database unreachable ({type(err).__name__})")
+        return 1
+    head = ScriptDirectory.from_config(_alembic_config()).get_current_head()
+    engine = build_engine(url)
+    try:
+        with engine.connect() as conn:
+            current = MigrationContext.configure(conn).get_current_revision()
+    finally:
+        engine.dispose()
+    if current != head:
+        print(f"NOT READY: migrations at {current}, head is {head}")
+        return 1
+    print(f"ready: database reachable, migrations at head ({head})")
+    return 0
+
+
+def _cmd_reset_demo(args: argparse.Namespace) -> int:
+    from app.db.session import SessionLocal, get_engine
+    from app.seed import DEMO_PASSWORD, format_credentials, format_summary, seed, summary
+
+    settings = get_settings()
+    why = reset_refusal(
+        settings.ENVIRONMENT,
+        settings.DATABASE_URL,
+        settings.UPLOAD_DIR,
+        args.yes_destroy_local_data,
+    )
+    if why:
+        print(why)
+        return 2
+    engine = get_engine()
+    with engine.begin() as conn:
+        names = (
+            conn.execute(
+                text(
+                    "SELECT tablename FROM pg_tables WHERE schemaname = 'public' "
+                    "AND tablename <> 'alembic_version'"
+                )
+            )
+            .scalars()
+            .all()
+        )
+        if names:
+            quoted = ", ".join(f'"{n}"' for n in names)
+            conn.execute(text(f"TRUNCATE {quoted} RESTART IDENTITY CASCADE"))
+    print(f"truncated {len(names)} tables")
+    print(f"deleted {_wipe_uploads(settings.UPLOAD_DIR)} files under {settings.UPLOAD_DIR}")
+    with SessionLocal() as db:
+        rows = seed(db)
+        data = summary(db)
+    print("re-seeded demo data\n")
+    print(format_summary(data))
+    print("\nDISPOSABLE DEMO CREDENTIALS (local development only)")
+    print(format_credentials(rows))
+    print(f"\nPassword for every account: {DEMO_PASSWORD}")
     return 0
 
 
@@ -141,6 +257,21 @@ def build_parser() -> argparse.ArgumentParser:
     sub.add_parser("seed", help="load deterministic demo data (idempotent)").set_defaults(
         func=_cmd_seed
     )
+    sub.add_parser("migrate", help="alembic upgrade head").set_defaults(func=_cmd_migrate)
+    sub.add_parser(
+        "check-ready", help="exit 0 only if the DB is reachable and migrations are at head"
+    ).set_defaults(func=_cmd_check_ready)
+    rst = sub.add_parser(
+        "reset-demo",
+        help="DESTRUCTIVE: TRUNCATE every table, delete uploaded files, re-seed. Local "
+        "development/test databases only (host db/localhost/127.0.0.1/::1).",
+    )
+    rst.add_argument(
+        "--yes-destroy-local-data",
+        action="store_true",
+        help="required confirmation: ALL data in the local database and UPLOAD_DIR is destroyed",
+    )
+    rst.set_defaults(func=_cmd_reset_demo)
     esc = sub.add_parser(
         "sla-escalate", help="notify staff about newly overdue requests (idempotent); prints count"
     )
