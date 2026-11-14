@@ -10,6 +10,7 @@ from sqlalchemy import (
     Enum,
     ForeignKey,
     Index,
+    Integer,
     String,
     UniqueConstraint,
     func,
@@ -59,6 +60,7 @@ class Organization(UUIDPkMixin, TimestampMixin, Base):
         String(64), default=DEFAULT_TIMEZONE, server_default=DEFAULT_TIMEZONE
     )
     is_active: Mapped[bool] = mapped_column(Boolean, default=True, server_default="true")
+    request_seq: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
 
 
 class Membership(UUIDPkMixin, TimestampMixin, Base):

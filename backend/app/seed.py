@@ -10,8 +10,10 @@ from dataclasses import dataclass
 from datetime import date, time
 from typing import Any
 
+from sqlalchemy import text
 from sqlalchemy.orm import Session
 
+from app.core.audit import sanitize
 from app.core.security import hash_password
 from app.models import (
     Asset,
@@ -22,13 +24,17 @@ from app.models import (
     Organization,
     Property,
     PropertyAccess,
+    RequestEvent,
     ServiceCategory,
+    ServiceRequest,
     Skill,
     TechnicianAvailability,
     TechnicianProfile,
     TechnicianSkill,
     User,
+    WorkNote,
 )
+from app.models.enums import NoteKind, NoteVisibility, Priority, RequestStatus
 
 DEMO_PASSWORD = "demo1234"  # noqa: S105 - disposable demo credential, documented
 NAMESPACE = uuid.UUID("6f1f2c4e-8f0b-4a53-9c63-0f1f0c5e11a0")
@@ -263,6 +269,178 @@ class Seeder:
                     membership_id=mid,
                     granted_by_membership_id=members["admin"].id,
                 )
+        self.seed_requests(org, spec, members)
+
+    def seed_requests(
+        self, org: Organization, spec: OrgSpec, members: dict[str, Membership]
+    ) -> None:
+        """~6 requests per org across SUBMITTED / TRIAGED / CANCELED / REOPENED (no files)."""
+        S, P, N = RequestStatus, Priority, NoteKind
+        req1, disp, tech = members["requester1"], members["dispatcher"], members["technician1"]
+        prefix = spec.key[:2].upper()
+        # (key, property idx, asset n or None, category, title, priority, final status)
+        rows = (
+            ("a", 0, 1, "HVAC", "Rooftop AC not cooling", P.HIGH, S.SUBMITTED),
+            ("b", 1, None, "Plumbing", "Leaking tap in the staff kitchen", P.NORMAL, S.SUBMITTED),
+            ("c", 0, None, "Electrical", "Flickering lights in the lobby", P.NORMAL, S.TRIAGED),
+            ("d", 1, 2, "General maintenance", "Boiler room door will not lock", P.LOW, S.TRIAGED),
+            (
+                "e",
+                0,
+                None,
+                "General maintenance",
+                "Duplicate: lobby light report",
+                P.LOW,
+                S.CANCELED,
+            ),
+            ("f", 0, 1, "HVAC", "Thermostat reading is wrong", P.NORMAL, S.REOPENED),
+        )
+        desc = (
+            "Reported by the tenant; the problem has persisted for several days and needs a visit."
+        )
+        for key, pidx, asset_n, cat, title, prio, final in rows:
+            rid = uid("request", spec.key, key)
+            if self.db.get(ServiceRequest, rid) is not None:
+                continue
+            number = self.db.execute(
+                text(
+                    "UPDATE organizations SET request_seq = request_seq + 1 "
+                    "WHERE id = :o RETURNING request_seq"
+                ),
+                {"o": org.id},
+            ).scalar_one()
+            asset_id = (
+                uid("asset", spec.key, f"{prefix}-P{pidx + 1}-{asset_n:02d}") if asset_n else None
+            )
+            req = self.ensure(
+                ServiceRequest,
+                rid,
+                id=rid,
+                organization_id=org.id,
+                number=number,
+                requester_membership_id=req1.id,
+                created_by_membership_id=req1.id,
+                property_id=uid("prop", spec.key, str(pidx)),
+                asset_id=asset_id,
+                category_id=uid("cat", spec.key, cat),
+                title=title,
+                description=desc,
+                priority=prio,
+                status=S.SUBMITTED,
+            )
+            self._event(org, req, req1, "REQUEST_CREATED", None, S.SUBMITTED, {"number": number})
+            chain: list[tuple[RequestStatus, Membership]] = []
+            if final in (S.TRIAGED, S.REOPENED):
+                chain.append((S.TRIAGED, disp))
+            if final == S.REOPENED:
+                chain += [
+                    (S.SCHEDULED, disp),
+                    (S.ACCEPTED, tech),
+                    (S.IN_PROGRESS, tech),
+                    (S.COMPLETED, tech),
+                    (S.REOPENED, req1),
+                ]
+            if final == S.CANCELED:
+                chain.append((S.CANCELED, req1))
+            current = S.SUBMITTED
+            for to, actor in chain:
+                note = None
+                if to == S.TRIAGED:
+                    note = self._note(
+                        org,
+                        req,
+                        disp,
+                        NoteVisibility.INTERNAL,
+                        N.TRIAGE,
+                        "Needs a technician visit.",
+                    )
+                elif to == S.CANCELED:
+                    note = self._note(
+                        org,
+                        req,
+                        req1,
+                        NoteVisibility.PUBLIC,
+                        N.CANCEL,
+                        "Reported twice, cancel this one.",
+                    )
+                elif to == S.REOPENED:
+                    note = self._note(
+                        org,
+                        req,
+                        req1,
+                        NoteVisibility.PUBLIC,
+                        N.REWORK,
+                        "The reading is still wrong.",
+                    )
+                self._event(
+                    org,
+                    req,
+                    actor,
+                    "STATUS_CHANGED",
+                    current,
+                    to,
+                    {"note_id": note.id} if note else None,
+                )
+                current = to
+            req.status = final
+            if final == S.CANCELED:
+                req.canceled_at = req.created_at
+            if final == S.REOPENED:
+                req.completed_at = req.created_at
+            if final == S.SUBMITTED and key == "a":
+                self._note(
+                    org,
+                    req,
+                    req1,
+                    NoteVisibility.PUBLIC,
+                    N.GENERAL,
+                    "The unit is on the roof, access via the east stairs.",
+                )
+                self._note(
+                    org,
+                    req,
+                    disp,
+                    NoteVisibility.INTERNAL,
+                    N.GENERAL,
+                    "Check warranty before dispatching a contractor.",
+                )
+            self.db.flush()
+
+    def _event(self, org, req, actor, type_, frm, to, data) -> None:
+        self.db.add(
+            RequestEvent(
+                organization_id=org.id,
+                request_id=req.id,
+                type=type_,
+                actor_membership_id=actor.id,
+                from_status=frm.value if frm else None,
+                to_status=to.value if to else None,
+                data=sanitize(data) if data else None,
+            )
+        )
+        self.db.flush()
+
+    def _note(self, org, req, author, visibility, kind, body) -> WorkNote:
+        note = WorkNote(
+            organization_id=org.id,
+            request_id=req.id,
+            author_membership_id=author.id,
+            visibility=visibility,
+            kind=kind,
+            body=body,
+        )
+        self.db.add(note)
+        self.db.flush()
+        self._event(
+            org,
+            req,
+            author,
+            "NOTE_ADDED",
+            None,
+            None,
+            {"note_id": str(note.id), "visibility": visibility.value, "kind": kind.value},
+        )
+        return note
 
 
 def seed(db: Session) -> list[tuple[str, str, str]]:

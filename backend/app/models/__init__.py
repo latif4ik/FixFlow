@@ -15,6 +15,7 @@ from app.models.org import (
     TechnicianSkill,
     TechnicianTimeOff,
 )
+from app.models.requests import EvidenceFile, RequestEvent, ServiceRequest, WorkNote
 
 __all__ = [
     "Asset",
@@ -22,14 +23,17 @@ __all__ = [
     "AuditEvent",
     "BusinessHour",
     "CategoryRequiredSkill",
+    "EvidenceFile",
     "Holiday",
     "Membership",
     "MembershipRole",
     "Organization",
     "Property",
     "PropertyAccess",
+    "RequestEvent",
     "SecurityEvent",
     "ServiceCategory",
+    "ServiceRequest",
     "Session",
     "Skill",
     "TechnicianAvailability",
@@ -37,4 +41,5 @@ __all__ = [
     "TechnicianSkill",
     "TechnicianTimeOff",
     "User",
+    "WorkNote",
 ]

@@ -1,4 +1,6 @@
 import os
+import shutil
+import tempfile
 from collections.abc import Iterator
 from pathlib import Path
 
@@ -10,6 +12,7 @@ from sqlalchemy.engine import make_url
 from sqlalchemy.orm import Session
 
 from alembic import command
+from app.core.config import get_settings
 from app.db.session import build_engine, set_engine
 from app.main import create_app
 
@@ -82,3 +85,20 @@ def client(migrated_db: str, db_engine: object) -> Iterator[TestClient]:
 def db(db_engine) -> Iterator[Session]:
     with Session(db_engine, expire_on_commit=False) as session:
         yield session
+
+
+@pytest.fixture(autouse=True, scope="session")
+def _upload_dir() -> Iterator[Path]:
+    """Evidence uploads must never touch the real volume during tests."""
+    settings = get_settings()
+    original = settings.UPLOAD_DIR
+    with tempfile.TemporaryDirectory(prefix="fixflow-test-uploads-") as d:
+        settings.UPLOAD_DIR = d
+        yield Path(d)
+    settings.UPLOAD_DIR = original
+
+
+@pytest.fixture(autouse=True)
+def _clean_upload_dir(_upload_dir: Path) -> None:
+    for child in _upload_dir.iterdir():
+        shutil.rmtree(child) if child.is_dir() else child.unlink()

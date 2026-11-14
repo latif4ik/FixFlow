@@ -45,6 +45,7 @@ class Asset(UUIDPkMixin, TimestampMixin, Base):
         ),
         UniqueConstraint("organization_id", "code", name="uq_assets_org_code"),
         UniqueConstraint("organization_id", "id", name="uq_assets_org_id"),
+        UniqueConstraint("organization_id", "property_id", "id", name="uq_assets_org_property_id"),
         Index("ix_assets_org_property", "organization_id", "property_id"),
         Index("ix_assets_org_status", "organization_id", "status"),
     )
