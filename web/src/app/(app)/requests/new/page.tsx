@@ -1,6 +1,6 @@
-// OWNER: W2. Placeholder: replace this page (import your screens from src/features/requester/**).
-import { PageHeader } from "@/components/ui";
+import { NewRequestForm } from "@/features/requester/new-request-form";
 
+// OWNER: W2. The screen lives in src/features/requester/.
 export default function Page() {
-  return <PageHeader title="New request" description="Placeholder: this screen is built by W2." />;
+  return <NewRequestForm />;
 }
