@@ -1,6 +1,12 @@
-// OWNER: W3. Placeholder: replace this page (import your screens from src/features/dispatch/**).
-import { PageHeader } from "@/components/ui";
+// OWNER: W3
+import { Suspense } from "react";
+import { LoadingState } from "@/components/ui";
+import { SchedulePage } from "@/features/dispatch/schedule/schedule-page";
 
 export default function Page() {
-  return <PageHeader title="Schedule board" description="Placeholder: this screen is built by W3." />;
+  return (
+    <Suspense fallback={<LoadingState label="Loading schedule" />}>
+      <SchedulePage />
+    </Suspense>
+  );
 }

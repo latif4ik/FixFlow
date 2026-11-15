@@ -1,6 +1,7 @@
-// OWNER: W3. Placeholder: replace this page (import your screens from src/features/dispatch/**).
-import { PageHeader } from "@/components/ui";
+// OWNER: W3
+import { AssetDetailPage } from "@/features/dispatch/properties/asset-detail";
 
-export default function Page() {
-  return <PageHeader title="Asset" description="Placeholder: this screen is built by W3." />;
+export default async function Page({ params }: { params: Promise<{ id: string }> }) {
+  const { id } = await params;
+  return <AssetDetailPage assetId={id} />;
 }
