@@ -29,7 +29,8 @@ The script runs exactly the QA-05 commands:
 |---|---|---|
 | Backend (pytest, 42 files) | **526** tests | all pass (latest run below) |
 | Web (Vitest + MSW, 32 files) | **131** tests | all pass (latest run below) |
-| Mobile (flutter test) | <!-- MOBILE_COUNT --> see [mobile/README.md](../mobile/README.md) | |
+| Mobile (flutter test) | **128** tests (+1 live-backend test, skipped unless `LIVE_API_URL` is set) | all pass |
+| Mobile (integration_test, emulator) | 1 end-to-end flow against the live backend | pass |
 
 What the tests cover, mapped to QA-01..03:
 
@@ -90,7 +91,14 @@ Manual cross-component check on the emulator (`Medium_Phone`, API `http://10.0.2
 it appears in the technician's inbox; the technician accepts/starts, goes offline (dev "Simulate offline" toggle), adds a
 note and a photo, restarts the app, reconnects: exactly one note and one attachment exist on the server and show up in
 the web timeline. Reassigning the job while the app is offline leaves the draft in a visible conflict state. Details: [mobile/README.md](../mobile/README.md).
-<!-- MOBILE_RESULTS: lead to fill in the final mobile test count, APK size and emulator walkthrough result -->
+
+Automated emulator run (`flutter test integration_test -d emulator-5554`, about 6 minutes, needs a freshly reset demo
+DB): technician1 signs in, accepts and starts REQ-7, adds an online note, records 1 m of CABLE-2.5, switches the dev
+offline toggle on (online-only actions show "Requires connection", a queued note shows "Pending sync"), switches it off
+(the note syncs; the API shows exactly one copy of each note and one material usage), then completes the job with a
+COMPLETION photo (the image picker is replaced by a test seam; everything else is real) and the API shows COMPLETED with
+one COMPLETION file. Result: `All tests passed!`. The live-backend outbox test (duplicate delivery -> exactly one note
+and one attachment) also passed. Debug APK size: about 220 MB. Not tested on a physical device.
 
 ## 6. Latest real run
 
@@ -112,7 +120,19 @@ Summary:  backend: PASS (299s)   web: PASS (17s)   mobile: SKIPPED
 ```
 
 Not covered by that run (see section 5): the mobile steps, `smoke.sh` and `simulate_race.py`
-(both write to the running demo database, so they were not part of this run; run them as in sections 3 and 4). <!-- MOBILE_RESULTS_RUN: replace with the full verify-all.sh output after the mobile agent finishes -->
+(both write to the running demo database, so they were not part of this run; run them as in sections 3 and 4).
+
+Mobile section, run separately after the Android work was finished (`SKIP_BACKEND=1 SKIP_WEB=1 ./scripts/verify-all.sh`,
+Flutter 3.47.9):
+
+```
+Mobile:   flutter pub get             ok
+          dart format --set-exit-if-changed   71 files, 0 changed
+          flutter analyze             No issues found!
+          flutter test                128 passed, 1 skipped
+          flutter build apk --debug   Built app-debug.apk
+Summary:  mobile: PASS (23s)
+```
 
 ## 7. Remaining failures and gaps
 

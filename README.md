@@ -143,7 +143,7 @@ Scripts: `lint`, `typecheck`, `test:ci`, `build`, `gen:api` (regenerate the type
 export PATH="$HOME/Flutter/flutter/bin:$PATH"
 cd mobile
 flutter pub get
-flutter build apk --debug                    # -> mobile/build/app/outputs/flutter-apk/app-debug.apk (about 170 MB)
+flutter build apk --debug                    # -> mobile/build/app/outputs/flutter-apk/app-debug.apk (about 220 MB)
 adb install -r build/app/outputs/flutter-apk/app-debug.apk
 ```
 
