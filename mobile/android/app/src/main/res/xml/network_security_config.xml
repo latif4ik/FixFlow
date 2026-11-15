@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  FixFlow Tech is a local-only demo: the backend runs over plain HTTP on the
+  developer machine (emulator: http://10.0.2.2:8000, physical device: LAN IP).
+  Cleartext is therefore permitted. A production deployment MUST use HTTPS and
+  remove this file plus android:usesCleartextTraffic in AndroidManifest.xml.
+-->
+<network-security-config>
+    <base-config cleartextTrafficPermitted="true">
+        <trust-anchors>
+            <certificates src="system" />
+        </trust-anchors>
+    </base-config>
+</network-security-config>
