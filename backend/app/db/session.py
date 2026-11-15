@@ -13,9 +13,25 @@ _engine: Engine | None = None
 SessionLocal: sessionmaker[Session] = sessionmaker(autoflush=False, expire_on_commit=False)
 
 
+def normalize_db_url(url: str) -> str:
+    """Use the installed sync driver (psycopg 3) whatever driver the URL names.
+
+    CI environments may hand over `postgresql+asyncpg://` or plain `postgresql://` URLs.
+    """
+    for prefix in (
+        "postgresql+asyncpg://",
+        "postgresql+psycopg2://",
+        "postgresql://",
+        "postgres://",
+    ):
+        if url.startswith(prefix):
+            return "postgresql+psycopg://" + url[len(prefix) :]
+    return url
+
+
 def build_engine(url: str) -> Engine:
     return create_engine(
-        url,
+        normalize_db_url(url),
         pool_pre_ping=True,
         pool_size=5,
         max_overflow=10,

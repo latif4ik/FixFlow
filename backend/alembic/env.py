@@ -17,7 +17,9 @@ target_metadata = Base.metadata
 
 def _url() -> str:
     # An explicit -x / programmatic override wins (used by tests); otherwise settings.
-    return config.get_main_option("sqlalchemy.url") or get_settings().DATABASE_URL
+    from app.db.session import normalize_db_url
+
+    return normalize_db_url(config.get_main_option("sqlalchemy.url") or get_settings().DATABASE_URL)
 
 
 def run_migrations_offline() -> None:

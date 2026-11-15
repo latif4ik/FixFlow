@@ -13,14 +13,15 @@ from sqlalchemy.orm import Session
 
 from alembic import command
 from app.core.config import get_settings
-from app.db.session import build_engine, set_engine
+from app.db.session import build_engine, normalize_db_url, set_engine
 from app.main import create_app
 
 BACKEND_DIR = Path(__file__).resolve().parent.parent
 
 
 def _test_url() -> str | None:
-    return os.environ.get("TEST_DATABASE_URL") or None
+    url = os.environ.get("TEST_DATABASE_URL") or None
+    return normalize_db_url(url) if url else None
 
 
 def _assert_safe(url: str) -> None:

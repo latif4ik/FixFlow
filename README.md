@@ -51,7 +51,7 @@ No paid services, API keys or external accounts are required.
 ```bash
 cp .env.example .env            # optional; every value has a working default
 docker compose up -d --build    # db (5432), backend (8000), web (3000); migrations run automatically
-docker compose exec backend python -m app.cli seed      # deterministic demo data, safe to re-run
+# demo data is seeded automatically on backend start (idempotent; SEED_DEMO_DATA=false to skip)
 ```
 
 | URL | What |
