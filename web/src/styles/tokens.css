@@ -1,0 +1,54 @@
+/*
+ * FixFlow design tokens: the single source for color, radius, type. Extracted from the "Day plan" and
+ * "Request detail" designs. Use the Tailwind utilities generated from @theme (bg-primary, text-ink, border-border ...)
+ * or the CSS variables directly. Light theme only.
+ */
+@theme {
+  --font-sans: var(--font-inter), ui-sans-serif, system-ui, sans-serif;
+  --font-heading: var(--font-manrope), var(--font-inter), ui-sans-serif, system-ui, sans-serif;
+
+  --color-primary: #0b7a5e;
+  --color-primary-dark: #0a5c47;
+  --color-deep: #103a30;
+  --color-primary-tint: #ddf0e8;
+  --color-primary-tint-2: #d5e5de;
+
+  --color-ink: #13231d;
+  --color-text: #33443c;
+  --color-muted: #55655e;
+  --color-subtle: #7e948a;
+
+  --color-border: #dce3dc;
+  --color-border-strong: #b9c6be;
+  --color-surface: #ffffff;
+  --color-canvas: #f1f4f0;
+  --color-canvas-2: #e7ece8;
+
+  --color-danger: #c2410c;
+  --color-danger-dark: #9a3412;
+  --color-danger-tint: #fdebdd;
+  --color-warning: #e8a23a;
+  --color-warning-dark: #8a5a00;
+  --color-warning-tint: #fff4d6;
+  --color-info: #1d4ed8;
+  --color-info-tint: #e3ecfd;
+
+  --radius-sm: 8px;
+  --radius-md: 10px;
+  --radius-lg: 12px;
+  --radius-xl: 16px;
+  --radius-pill: 999px;
+
+  --shadow-panel: 0 1px 2px rgb(19 35 29 / 0.04), 0 1px 3px rgb(19 35 29 / 0.06);
+  --shadow-pop: 0 8px 24px rgb(19 35 29 / 0.14);
+}
+
+:root {
+  --focus-ring: 0 0 0 2px #ffffff, 0 0 0 4px #0b7a5e;
+}
+
+/* Visible keyboard focus everywhere; mouse clicks do not show it. */
+:where(a, button, input, textarea, select, summary, [tabindex], [role="button"], [role="tab"], [role="menuitem"]):focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring);
+}
