@@ -1,6 +1,5 @@
-// OWNER: W4. Placeholder: replace this page (import your screens from src/features/admin/**).
-import { PageHeader } from "@/components/ui";
+import { HoursPage } from "@/features/admin/hours-page";
 
 export default function Page() {
-  return <PageHeader title="Business hours and holidays" description="Placeholder: this screen is built by W4." />;
+  return <HoursPage />;
 }

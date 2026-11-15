@@ -1,6 +1,5 @@
-// OWNER: W4. Placeholder: replace this page (import your screens from src/features/admin/**).
-import { PageHeader } from "@/components/ui";
+import { CategoriesPage } from "@/features/admin/categories-page";
 
 export default function Page() {
-  return <PageHeader title="Categories and skills" description="Placeholder: this screen is built by W4." />;
+  return <CategoriesPage />;
 }

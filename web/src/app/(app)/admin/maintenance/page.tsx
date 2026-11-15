@@ -1,6 +1,5 @@
-// OWNER: W4. Placeholder: replace this page (import your screens from src/features/admin/**).
-import { PageHeader } from "@/components/ui";
+import { MaintenancePage } from "@/features/admin/maintenance-page";
 
 export default function Page() {
-  return <PageHeader title="Maintenance plans" description="Placeholder: this screen is built by W4." />;
+  return <MaintenancePage />;
 }
