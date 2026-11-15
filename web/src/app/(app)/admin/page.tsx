@@ -1,6 +1,5 @@
-// OWNER: W4. Placeholder: replace this page (import your screens from src/features/admin/**).
-import { PageHeader } from "@/components/ui";
+import { AdminIndex } from "@/features/admin/admin-index";
 
 export default function Page() {
-  return <PageHeader title="Admin" description="Placeholder: this screen is built by W4." />;
+  return <AdminIndex />;
 }

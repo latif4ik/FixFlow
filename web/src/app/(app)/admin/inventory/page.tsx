@@ -1,6 +1,5 @@
-// OWNER: W4. Placeholder: replace this page (import your screens from src/features/admin/**).
-import { PageHeader } from "@/components/ui";
+import { InventoryPage } from "@/features/admin/inventory-page";
 
 export default function Page() {
-  return <PageHeader title="Inventory" description="Placeholder: this screen is built by W4." />;
+  return <InventoryPage />;
 }
