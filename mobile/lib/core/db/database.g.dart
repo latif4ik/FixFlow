@@ -1103,6 +1103,27 @@ class $PendingCommandsTable extends PendingCommands
         type: DriftSqlType.dateTime,
         requiredDuringInsert: false,
       );
+  static const VerificationMeta _userIdMeta = const VerificationMeta('userId');
+  @override
+  late final GeneratedColumn<String> userId = GeneratedColumn<String>(
+    'user_id',
+    aliasedName,
+    false,
+    type: DriftSqlType.string,
+    requiredDuringInsert: false,
+    defaultValue: const Constant(''),
+  );
+  static const VerificationMeta _errorCodeMeta = const VerificationMeta(
+    'errorCode',
+  );
+  @override
+  late final GeneratedColumn<String> errorCode = GeneratedColumn<String>(
+    'error_code',
+    aliasedName,
+    true,
+    type: DriftSqlType.string,
+    requiredDuringInsert: false,
+  );
   static const VerificationMeta _createdAtMeta = const VerificationMeta(
     'createdAt',
   );
@@ -1137,6 +1158,8 @@ class $PendingCommandsTable extends PendingCommands
     attempts,
     lastError,
     nextAttemptAt,
+    userId,
+    errorCode,
     createdAt,
     updatedAt,
   ];
@@ -1228,6 +1251,18 @@ class $PendingCommandsTable extends PendingCommands
         ),
       );
     }
+    if (data.containsKey('user_id')) {
+      context.handle(
+        _userIdMeta,
+        userId.isAcceptableOrUnknown(data['user_id']!, _userIdMeta),
+      );
+    }
+    if (data.containsKey('error_code')) {
+      context.handle(
+        _errorCodeMeta,
+        errorCode.isAcceptableOrUnknown(data['error_code']!, _errorCodeMeta),
+      );
+    }
     if (data.containsKey('created_at')) {
       context.handle(
         _createdAtMeta,
@@ -1293,6 +1328,14 @@ class $PendingCommandsTable extends PendingCommands
         DriftSqlType.dateTime,
         data['${effectivePrefix}next_attempt_at'],
       ),
+      userId: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}user_id'],
+      )!,
+      errorCode: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}error_code'],
+      ),
       createdAt: attachedDatabase.typeMapping.read(
         DriftSqlType.dateTime,
         data['${effectivePrefix}created_at'],
@@ -1322,6 +1365,8 @@ class PendingCommandRow extends DataClass
   final int attempts;
   final String? lastError;
   final DateTime? nextAttemptAt;
+  final String userId;
+  final String? errorCode;
   final DateTime createdAt;
   final DateTime updatedAt;
   const PendingCommandRow({
@@ -1335,6 +1380,8 @@ class PendingCommandRow extends DataClass
     required this.attempts,
     this.lastError,
     this.nextAttemptAt,
+    required this.userId,
+    this.errorCode,
     required this.createdAt,
     required this.updatedAt,
   });
@@ -1354,6 +1401,10 @@ class PendingCommandRow extends DataClass
     }
     if (!nullToAbsent || nextAttemptAt != null) {
       map['next_attempt_at'] = Variable<DateTime>(nextAttemptAt);
+    }
+    map['user_id'] = Variable<String>(userId);
+    if (!nullToAbsent || errorCode != null) {
+      map['error_code'] = Variable<String>(errorCode);
     }
     map['created_at'] = Variable<DateTime>(createdAt);
     map['updated_at'] = Variable<DateTime>(updatedAt);
@@ -1376,6 +1427,10 @@ class PendingCommandRow extends DataClass
       nextAttemptAt: nextAttemptAt == null && nullToAbsent
           ? const Value.absent()
           : Value(nextAttemptAt),
+      userId: Value(userId),
+      errorCode: errorCode == null && nullToAbsent
+          ? const Value.absent()
+          : Value(errorCode),
       createdAt: Value(createdAt),
       updatedAt: Value(updatedAt),
     );
@@ -1397,6 +1452,8 @@ class PendingCommandRow extends DataClass
       attempts: serializer.fromJson<int>(json['attempts']),
       lastError: serializer.fromJson<String?>(json['lastError']),
       nextAttemptAt: serializer.fromJson<DateTime?>(json['nextAttemptAt']),
+      userId: serializer.fromJson<String>(json['userId']),
+      errorCode: serializer.fromJson<String?>(json['errorCode']),
       createdAt: serializer.fromJson<DateTime>(json['createdAt']),
       updatedAt: serializer.fromJson<DateTime>(json['updatedAt']),
     );
@@ -1415,6 +1472,8 @@ class PendingCommandRow extends DataClass
       'attempts': serializer.toJson<int>(attempts),
       'lastError': serializer.toJson<String?>(lastError),
       'nextAttemptAt': serializer.toJson<DateTime?>(nextAttemptAt),
+      'userId': serializer.toJson<String>(userId),
+      'errorCode': serializer.toJson<String?>(errorCode),
       'createdAt': serializer.toJson<DateTime>(createdAt),
       'updatedAt': serializer.toJson<DateTime>(updatedAt),
     };
@@ -1431,6 +1490,8 @@ class PendingCommandRow extends DataClass
     int? attempts,
     Value<String?> lastError = const Value.absent(),
     Value<DateTime?> nextAttemptAt = const Value.absent(),
+    String? userId,
+    Value<String?> errorCode = const Value.absent(),
     DateTime? createdAt,
     DateTime? updatedAt,
   }) => PendingCommandRow(
@@ -1446,6 +1507,8 @@ class PendingCommandRow extends DataClass
     nextAttemptAt: nextAttemptAt.present
         ? nextAttemptAt.value
         : this.nextAttemptAt,
+    userId: userId ?? this.userId,
+    errorCode: errorCode.present ? errorCode.value : this.errorCode,
     createdAt: createdAt ?? this.createdAt,
     updatedAt: updatedAt ?? this.updatedAt,
   );
@@ -1467,6 +1530,8 @@ class PendingCommandRow extends DataClass
       nextAttemptAt: data.nextAttemptAt.present
           ? data.nextAttemptAt.value
           : this.nextAttemptAt,
+      userId: data.userId.present ? data.userId.value : this.userId,
+      errorCode: data.errorCode.present ? data.errorCode.value : this.errorCode,
       createdAt: data.createdAt.present ? data.createdAt.value : this.createdAt,
       updatedAt: data.updatedAt.present ? data.updatedAt.value : this.updatedAt,
     );
@@ -1485,6 +1550,8 @@ class PendingCommandRow extends DataClass
           ..write('attempts: $attempts, ')
           ..write('lastError: $lastError, ')
           ..write('nextAttemptAt: $nextAttemptAt, ')
+          ..write('userId: $userId, ')
+          ..write('errorCode: $errorCode, ')
           ..write('createdAt: $createdAt, ')
           ..write('updatedAt: $updatedAt')
           ..write(')'))
@@ -1503,6 +1570,8 @@ class PendingCommandRow extends DataClass
     attempts,
     lastError,
     nextAttemptAt,
+    userId,
+    errorCode,
     createdAt,
     updatedAt,
   );
@@ -1520,6 +1589,8 @@ class PendingCommandRow extends DataClass
           other.attempts == this.attempts &&
           other.lastError == this.lastError &&
           other.nextAttemptAt == this.nextAttemptAt &&
+          other.userId == this.userId &&
+          other.errorCode == this.errorCode &&
           other.createdAt == this.createdAt &&
           other.updatedAt == this.updatedAt);
 }
@@ -1535,6 +1606,8 @@ class PendingCommandsCompanion extends UpdateCompanion<PendingCommandRow> {
   final Value<int> attempts;
   final Value<String?> lastError;
   final Value<DateTime?> nextAttemptAt;
+  final Value<String> userId;
+  final Value<String?> errorCode;
   final Value<DateTime> createdAt;
   final Value<DateTime> updatedAt;
   const PendingCommandsCompanion({
@@ -1548,6 +1621,8 @@ class PendingCommandsCompanion extends UpdateCompanion<PendingCommandRow> {
     this.attempts = const Value.absent(),
     this.lastError = const Value.absent(),
     this.nextAttemptAt = const Value.absent(),
+    this.userId = const Value.absent(),
+    this.errorCode = const Value.absent(),
     this.createdAt = const Value.absent(),
     this.updatedAt = const Value.absent(),
   });
@@ -1562,6 +1637,8 @@ class PendingCommandsCompanion extends UpdateCompanion<PendingCommandRow> {
     this.attempts = const Value.absent(),
     this.lastError = const Value.absent(),
     this.nextAttemptAt = const Value.absent(),
+    this.userId = const Value.absent(),
+    this.errorCode = const Value.absent(),
     required DateTime createdAt,
     required DateTime updatedAt,
   }) : clientCommandId = Value(clientCommandId),
@@ -1582,6 +1659,8 @@ class PendingCommandsCompanion extends UpdateCompanion<PendingCommandRow> {
     Expression<int>? attempts,
     Expression<String>? lastError,
     Expression<DateTime>? nextAttemptAt,
+    Expression<String>? userId,
+    Expression<String>? errorCode,
     Expression<DateTime>? createdAt,
     Expression<DateTime>? updatedAt,
   }) {
@@ -1596,6 +1675,8 @@ class PendingCommandsCompanion extends UpdateCompanion<PendingCommandRow> {
       if (attempts != null) 'attempts': attempts,
       if (lastError != null) 'last_error': lastError,
       if (nextAttemptAt != null) 'next_attempt_at': nextAttemptAt,
+      if (userId != null) 'user_id': userId,
+      if (errorCode != null) 'error_code': errorCode,
       if (createdAt != null) 'created_at': createdAt,
       if (updatedAt != null) 'updated_at': updatedAt,
     });
@@ -1612,6 +1693,8 @@ class PendingCommandsCompanion extends UpdateCompanion<PendingCommandRow> {
     Value<int>? attempts,
     Value<String?>? lastError,
     Value<DateTime?>? nextAttemptAt,
+    Value<String>? userId,
+    Value<String?>? errorCode,
     Value<DateTime>? createdAt,
     Value<DateTime>? updatedAt,
   }) {
@@ -1626,6 +1709,8 @@ class PendingCommandsCompanion extends UpdateCompanion<PendingCommandRow> {
       attempts: attempts ?? this.attempts,
       lastError: lastError ?? this.lastError,
       nextAttemptAt: nextAttemptAt ?? this.nextAttemptAt,
+      userId: userId ?? this.userId,
+      errorCode: errorCode ?? this.errorCode,
       createdAt: createdAt ?? this.createdAt,
       updatedAt: updatedAt ?? this.updatedAt,
     );
@@ -1664,6 +1749,12 @@ class PendingCommandsCompanion extends UpdateCompanion<PendingCommandRow> {
     if (nextAttemptAt.present) {
       map['next_attempt_at'] = Variable<DateTime>(nextAttemptAt.value);
     }
+    if (userId.present) {
+      map['user_id'] = Variable<String>(userId.value);
+    }
+    if (errorCode.present) {
+      map['error_code'] = Variable<String>(errorCode.value);
+    }
     if (createdAt.present) {
       map['created_at'] = Variable<DateTime>(createdAt.value);
     }
@@ -1686,6 +1777,8 @@ class PendingCommandsCompanion extends UpdateCompanion<PendingCommandRow> {
           ..write('attempts: $attempts, ')
           ..write('lastError: $lastError, ')
           ..write('nextAttemptAt: $nextAttemptAt, ')
+          ..write('userId: $userId, ')
+          ..write('errorCode: $errorCode, ')
           ..write('createdAt: $createdAt, ')
           ..write('updatedAt: $updatedAt')
           ..write(')'))
@@ -2813,6 +2906,8 @@ typedef $$PendingCommandsTableCreateCompanionBuilder =
       Value<int> attempts,
       Value<String?> lastError,
       Value<DateTime?> nextAttemptAt,
+      Value<String> userId,
+      Value<String?> errorCode,
       required DateTime createdAt,
       required DateTime updatedAt,
     });
@@ -2828,6 +2923,8 @@ typedef $$PendingCommandsTableUpdateCompanionBuilder =
       Value<int> attempts,
       Value<String?> lastError,
       Value<DateTime?> nextAttemptAt,
+      Value<String> userId,
+      Value<String?> errorCode,
       Value<DateTime> createdAt,
       Value<DateTime> updatedAt,
     });
@@ -2934,6 +3031,16 @@ class $$PendingCommandsTableFilterComposer
     builder: (column) => ColumnFilters(column),
   );
 
+  ColumnFilters<String> get userId => $composableBuilder(
+    column: $table.userId,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<String> get errorCode => $composableBuilder(
+    column: $table.errorCode,
+    builder: (column) => ColumnFilters(column),
+  );
+
   ColumnFilters<DateTime> get createdAt => $composableBuilder(
     column: $table.createdAt,
     builder: (column) => ColumnFilters(column),
@@ -3029,6 +3136,16 @@ class $$PendingCommandsTableOrderingComposer
     builder: (column) => ColumnOrderings(column),
   );
 
+  ColumnOrderings<String> get userId => $composableBuilder(
+    column: $table.userId,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<String> get errorCode => $composableBuilder(
+    column: $table.errorCode,
+    builder: (column) => ColumnOrderings(column),
+  );
+
   ColumnOrderings<DateTime> get createdAt => $composableBuilder(
     column: $table.createdAt,
     builder: (column) => ColumnOrderings(column),
@@ -3084,6 +3201,12 @@ class $$PendingCommandsTableAnnotationComposer
     column: $table.nextAttemptAt,
     builder: (column) => column,
   );
+
+  GeneratedColumn<String> get userId =>
+      $composableBuilder(column: $table.userId, builder: (column) => column);
+
+  GeneratedColumn<String> get errorCode =>
+      $composableBuilder(column: $table.errorCode, builder: (column) => column);
 
   GeneratedColumn<DateTime> get createdAt =>
       $composableBuilder(column: $table.createdAt, builder: (column) => column);
@@ -3158,6 +3281,8 @@ class $$PendingCommandsTableTableManager
                 Value<int> attempts = const Value.absent(),
                 Value<String?> lastError = const Value.absent(),
                 Value<DateTime?> nextAttemptAt = const Value.absent(),
+                Value<String> userId = const Value.absent(),
+                Value<String?> errorCode = const Value.absent(),
                 Value<DateTime> createdAt = const Value.absent(),
                 Value<DateTime> updatedAt = const Value.absent(),
               }) => PendingCommandsCompanion(
@@ -3171,6 +3296,8 @@ class $$PendingCommandsTableTableManager
                 attempts: attempts,
                 lastError: lastError,
                 nextAttemptAt: nextAttemptAt,
+                userId: userId,
+                errorCode: errorCode,
                 createdAt: createdAt,
                 updatedAt: updatedAt,
               ),
@@ -3186,6 +3313,8 @@ class $$PendingCommandsTableTableManager
                 Value<int> attempts = const Value.absent(),
                 Value<String?> lastError = const Value.absent(),
                 Value<DateTime?> nextAttemptAt = const Value.absent(),
+                Value<String> userId = const Value.absent(),
+                Value<String?> errorCode = const Value.absent(),
                 required DateTime createdAt,
                 required DateTime updatedAt,
               }) => PendingCommandsCompanion.insert(
@@ -3199,6 +3328,8 @@ class $$PendingCommandsTableTableManager
                 attempts: attempts,
                 lastError: lastError,
                 nextAttemptAt: nextAttemptAt,
+                userId: userId,
+                errorCode: errorCode,
                 createdAt: createdAt,
                 updatedAt: updatedAt,
               ),

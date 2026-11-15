@@ -46,6 +46,12 @@ class SessionController extends Notifier<SessionState> {
     final tech = result.memberships.where((m) => m.isTechnician).toList();
     final orgId = autoSelectOrgId(tech, state.selectedOrgId);
     await ref.read(tokenStoreProvider).write(result.token);
+    // A different user must never see the previous user's cached jobs
+    // (the queued outbox is kept but is only replayed by its owner).
+    final previous = await ref.read(sessionStoreProvider).load();
+    if (previous != null && previous.user.id != result.user.id) {
+      await ref.read(appDatabaseProvider).clearReadCache();
+    }
     await ref
         .read(sessionStoreProvider)
         .save(

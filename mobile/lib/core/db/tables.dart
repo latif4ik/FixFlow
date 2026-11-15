@@ -49,13 +49,17 @@ class PendingCommands extends Table {
   TextColumn get clientCommandId => text().unique()();
   TextColumn get orgId => text()();
   TextColumn get requestId => text()();
-  // e.g. ADD_NOTE
+  // NOTE (more types later)
   TextColumn get type => text()();
   TextColumn get payloadJson => text()();
   TextColumn get status => text().withDefault(const Constant('PENDING'))();
   IntColumn get attempts => integer().withDefault(const Constant(0))();
   TextColumn get lastError => text().nullable()();
   DateTimeColumn get nextAttemptAt => dateTime().nullable()();
+  // Schema v2: owner of the command (a different signed-in user must never
+  // replay it) and a machine-readable reason for CONFLICT/FAILED.
+  TextColumn get userId => text().withDefault(const Constant(''))();
+  TextColumn get errorCode => text().nullable()();
   DateTimeColumn get createdAt => dateTime()();
   DateTimeColumn get updatedAt => dateTime()();
 }

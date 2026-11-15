@@ -3,7 +3,9 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
 import '../../core/providers.dart';
+import '../../core/widgets/stale_banner.dart';
 import '../../core/widgets/state_views.dart';
+import '../outbox/outbox_screen.dart';
 import 'assignment_card.dart';
 import 'job_models.dart';
 import 'jobs_providers.dart';
@@ -33,6 +35,7 @@ class InboxScreen extends ConsumerWidget {
             ],
           ),
           actions: [
+            OutboxAction(onPressed: () => context.push('/outbox')),
             IconButton(
               tooltip: 'Profile',
               icon: const Icon(Icons.account_circle_outlined),
@@ -94,7 +97,7 @@ class InboxList extends ConsumerWidget {
             ),
           );
         }
-        return RefreshIndicator(
+        final list = RefreshIndicator(
           onRefresh: () => ref.read(provider.notifier).refresh(),
           child: NotificationListener<ScrollNotification>(
             onNotification: (n) {
@@ -133,6 +136,13 @@ class InboxList extends ConsumerWidget {
               },
             ),
           ),
+        );
+        if (!state.stale) return list;
+        return Column(
+          children: [
+            StaleDataBanner(syncedAt: state.syncedAt, timezone: timezone),
+            Expanded(child: list),
+          ],
         );
       },
     );

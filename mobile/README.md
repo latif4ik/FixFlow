@@ -25,6 +25,7 @@ flutter analyze
 flutter test
 flutter build apk --debug          # -> build/app/outputs/flutter-apk/app-debug.apk
 dart run build_runner build --delete-conflicting-outputs   # only after changing lib/core/db/tables.dart
+LIVE_API_URL=http://localhost:8000 flutter test test/live   # real-backend offline-queue test (writes demo data)
 ```
 Install on a running emulator/device: `adb install -r build/app/outputs/flutter-apk/app-debug.apk`.
 

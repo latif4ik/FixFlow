@@ -141,6 +141,10 @@ class ApiClient {
     Options? options,
   }) => _send(() => dio.post<Object?>(path, data: body, options: options));
 
+  /// Multipart POST (file uploads).
+  Future<Map<String, dynamic>> postForm(String path, FormData form) =>
+      _send(() => dio.post<Object?>(path, data: form));
+
   /// POST whose success body is ignored (e.g. 204 logout).
   Future<void> postVoid(String path, {Object? body}) =>
       _send(() => dio.post<Object?>(path, data: body), allowEmpty: true);

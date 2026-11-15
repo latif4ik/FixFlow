@@ -1,11 +1,16 @@
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../core/providers.dart';
+import 'caching_jobs_repository.dart';
 import 'job_models.dart';
 import 'jobs_repository.dart';
 
 final jobsRepositoryProvider = Provider<JobsRepository>(
-  (ref) => ApiJobsRepository(ref.watch(apiClientProvider)),
+  (ref) => CachingJobsRepository(
+    ApiJobsRepository(ref.watch(apiClientProvider)),
+    ref.watch(appDatabaseProvider),
+    () => ref.read(selectedOrgIdProvider),
+  ),
 );
 
 /// Paginated list state for one inbox tab.
@@ -16,7 +21,13 @@ class InboxState {
     required this.page,
     this.loadingMore = false,
     this.loadMoreError,
+    this.stale = false,
+    this.syncedAt,
   });
+
+  /// Served from the offline cache (show "Offline - showing data from ...").
+  final bool stale;
+  final DateTime? syncedAt;
 
   final List<AssignmentItem> items;
   final int total;
@@ -39,6 +50,8 @@ class InboxState {
     page: page ?? this.page,
     loadingMore: loadingMore ?? this.loadingMore,
     loadMoreError: clearError ? null : (loadMoreError ?? this.loadMoreError),
+    stale: stale,
+    syncedAt: syncedAt,
   );
 }
 
@@ -52,10 +65,22 @@ class InboxController extends AsyncNotifier<InboxState> {
   @override
   Future<InboxState> build() async {
     ref.watch(selectedOrgIdProvider);
+    // Back online after showing cached data: reload fresh data.
+    ref.listen(isOfflineProvider, (prev, next) {
+      if (prev == true && next == false && state.asData?.value.stale == true) {
+        ref.invalidateSelf();
+      }
+    });
     final page = await ref
         .read(jobsRepositoryProvider)
         .listAssignments(scope: scope, page: 1, pageSize: pageSize);
-    return InboxState(items: page.items, total: page.total, page: 1);
+    return InboxState(
+      items: page.items,
+      total: page.total,
+      page: 1,
+      stale: page.stale,
+      syncedAt: page.syncedAt,
+    );
   }
 
   Future<void> refresh() async {
@@ -114,5 +139,8 @@ final jobDetailProvider = FutureProvider.autoDispose.family<JobDetail, String>((
   requestId,
 ) {
   ref.watch(selectedOrgIdProvider);
+  ref.listen(isOfflineProvider, (prev, next) {
+    if (prev == true && next == false) ref.invalidateSelf();
+  });
   return ref.read(jobsRepositoryProvider).getJob(requestId);
 });

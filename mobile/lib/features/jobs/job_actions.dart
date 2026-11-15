@@ -1,4 +1,8 @@
 import 'package:flutter/material.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
+
+import '../../core/providers.dart';
+import '../../core/widgets/requires_connection.dart';
 
 import '../../core/util/formatters.dart';
 import '../../core/widgets/section_card.dart';
@@ -23,7 +27,7 @@ String actionLabel(String action) =>
 /// EXTENSION POINT (M3): replace the body of this widget with real controls
 /// (status transitions, notes, evidence, materials) driven by [actions]
 /// (`allowed_actions` from the server). M1 renders a read-only list.
-class JobActionsSection extends StatelessWidget {
+class JobActionsSection extends ConsumerWidget {
   const JobActionsSection({
     super.key,
     required this.job,
@@ -32,8 +36,17 @@ class JobActionsSection extends StatelessWidget {
   final JobDetail job;
   final List<String> actions;
 
+  /// Actions that work offline (queued in the outbox); everything else needs
+  /// a connection (MOB-08) and is shown as unavailable while offline.
+  static const offlineCapable = {'add_note', 'add_photo'};
+
   @override
-  Widget build(BuildContext context) => SectionCard(
+  Widget build(BuildContext context, WidgetRef ref) {
+    final offline = ref.watch(isOfflineProvider);
+    return _build(context, offline);
+  }
+
+  Widget _build(BuildContext context, bool offline) => SectionCard(
     title: 'Available actions',
     children: [
       if (actions.isEmpty)
@@ -42,11 +55,18 @@ class JobActionsSection extends StatelessWidget {
         for (final a in actions)
           Padding(
             padding: const EdgeInsets.symmetric(vertical: 4),
-            child: Row(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Icon(_actionLabels[a]?.$1 ?? Icons.bolt, size: 18),
-                const SizedBox(width: 8),
-                Expanded(child: Text(actionLabel(a))),
+                Row(
+                  children: [
+                    Icon(_actionLabels[a]?.$1 ?? Icons.bolt, size: 18),
+                    const SizedBox(width: 8),
+                    Expanded(child: Text(actionLabel(a))),
+                  ],
+                ),
+                if (offline && !offlineCapable.contains(a))
+                  const RequiresConnectionLabel(),
               ],
             ),
           ),

@@ -22,7 +22,7 @@ void main() {
         'pending_attachments',
       ]),
     );
-    expect(db.schemaVersion, 1);
+    expect(db.schemaVersion, 2);
   });
 
   test('cached_jobs is keyed by (org, request)', () async {

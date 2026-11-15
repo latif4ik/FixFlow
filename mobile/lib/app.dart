@@ -12,6 +12,8 @@ import 'features/jobs/inbox_screen.dart';
 import 'features/jobs/job_detail_screen.dart';
 import 'features/jobs/job_models.dart';
 import 'features/org/org_screens.dart';
+import 'features/outbox/outbox_providers.dart';
+import 'features/outbox/outbox_screen.dart';
 import 'features/profile/profile_screen.dart';
 
 /// Pure redirect rule (unit-tested). Returns null to stay on [location].
@@ -69,6 +71,7 @@ final routerProvider = Provider<GoRouter>((ref) {
               : null,
         ),
       ),
+      GoRoute(path: '/outbox', builder: (_, _) => const OutboxScreen()),
       GoRoute(path: '/profile', builder: (_, _) => const ProfileScreen()),
     ],
   );
@@ -80,16 +83,20 @@ class FixFlowApp extends ConsumerWidget {
   const FixFlowApp({super.key});
 
   @override
-  Widget build(BuildContext context, WidgetRef ref) => MaterialApp.router(
-    title: AppConfig.appName,
-    theme: buildAppTheme(),
-    routerConfig: ref.watch(routerProvider),
-    debugShowCheckedModeBanner: false,
-    builder: (context, child) => Column(
-      children: [
-        const OfflineBanner(),
-        Expanded(child: child ?? const SizedBox.shrink()),
-      ],
-    ),
-  );
+  Widget build(BuildContext context, WidgetRef ref) {
+    // Starts the outbox sync engine (app start, reconnect, timer).
+    ref.watch(syncControllerProvider);
+    return MaterialApp.router(
+      title: AppConfig.appName,
+      theme: buildAppTheme(),
+      routerConfig: ref.watch(routerProvider),
+      debugShowCheckedModeBanner: false,
+      builder: (context, child) => Column(
+        children: [
+          const OfflineBanner(),
+          Expanded(child: child ?? const SizedBox.shrink()),
+        ],
+      ),
+    );
+  }
 }

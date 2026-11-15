@@ -1,0 +1,4 @@
+tags:
+  live:
+    # Needs a running backend: skipped unless LIVE_API_URL is set.
+    description: Tests against a real FixFlow API (LIVE_API_URL).

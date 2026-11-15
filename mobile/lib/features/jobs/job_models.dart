@@ -78,6 +78,7 @@ class AssignmentItem {
     required this.allowedActions,
     this.estimateStatus,
     this.startBlockedReason,
+    this.raw,
   });
 
   factory AssignmentItem.fromJson(Map<String, dynamic> j) {
@@ -103,9 +104,12 @@ class AssignmentItem {
       ],
       estimateStatus: j['estimate_status'] as String?,
       startBlockedReason: j['start_blocked_reason'] as String?,
+      raw: j,
     );
   }
 
+  /// Original server JSON (kept so the offline cache can store it verbatim).
+  final Map<String, dynamic>? raw;
   final String assignmentId;
   final String requestId;
   final String displayId;
@@ -129,6 +133,8 @@ class AssignmentPage {
     required this.total,
     required this.page,
     required this.pageSize,
+    this.stale = false,
+    this.syncedAt,
   });
 
   factory AssignmentPage.fromJson(Map<String, dynamic> j) => AssignmentPage(
@@ -145,6 +151,11 @@ class AssignmentPage {
   final int total;
   final int page;
   final int pageSize;
+
+  /// True when served from the offline cache; [syncedAt] is when it was last
+  /// synchronized with the server.
+  final bool stale;
+  final DateTime? syncedAt;
 }
 
 enum AssignmentScope {
@@ -316,6 +327,9 @@ class JobDetail {
     required this.timeline,
     required this.attachmentCount,
     required this.materials,
+    this.raw,
+    this.stale = false,
+    this.syncedAt,
   });
 
   factory JobDetail.fromJson(Map<String, dynamic> j) {
@@ -373,9 +387,38 @@ class JobDetail {
             currency: (m['currency'] ?? 'KGS') as String,
           ),
       ],
+      raw: j,
     );
   }
 
+  /// Same job flagged as served from the offline cache.
+  JobDetail asStale(DateTime syncedAt) => JobDetail(
+    id: id,
+    displayId: displayId,
+    title: title,
+    description: description,
+    status: status,
+    priority: priority,
+    categoryName: categoryName,
+    property: property,
+    asset: asset,
+    requesterName: requesterName,
+    appointment: appointment,
+    estimate: estimate,
+    sla: sla,
+    allowedActions: allowedActions,
+    notes: notes,
+    timeline: timeline,
+    attachmentCount: attachmentCount,
+    materials: materials,
+    raw: raw,
+    stale: true,
+    syncedAt: syncedAt,
+  );
+
+  final Map<String, dynamic>? raw;
+  final bool stale;
+  final DateTime? syncedAt;
   final String id;
   final String displayId;
   final String title;

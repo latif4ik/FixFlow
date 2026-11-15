@@ -41,22 +41,32 @@ Offline banner: `isOfflineProvider` = simulated || radio down (connectivity_plus
 was a connection failure (`networkReachableProvider`). `simulateOfflineProvider` (Profile switch in
 debug builds) forces offline for demos/tests.
 
-## Database (schemaVersion 1)
+## Database (schemaVersion 2)
 `session` (single row id=1), `cached_jobs` (PK org_id+request_id; item_json, detail_json, scope),
 `pending_commands` (autoinc id for ordering, unique client_command_id, org_id, request_id, type, payload_json,
 status PENDING|SYNCING|CONFLICT|FAILED, attempts, last_error, next_attempt_at), `pending_attachments`
 (FK client_command_id, position, local_path, mime, size, status, uploaded_file_id; unique (command, position)).
+v2 (M2) adds `pending_commands.user_id` (owner; legacy '' rows are never replayed) and `error_code`.
 Migrations: bump `schemaVersion`, add an `onUpgrade` step (`m.createTable`/`m.addColumn`), never edit old steps.
 Regenerate with `dart run build_runner build --delete-conflicting-outputs` and commit `database.g.dart`.
 
-## Offline hooks for M2
-- Implement `CachingJobsRepository implements JobsRepository` (wrap `ApiJobsRepository`, write/read `cached_jobs`
-  scoped by org, fall back on `NetworkException`) and swap it in `jobsRepositoryProvider`
-  (`features/jobs/jobs_providers.dart`). UI is unchanged.
-- Outbox: new `features/outbox/` (repository over `pending_*`, a `SyncController` Notifier started from
-  `app.dart`, triggered by `connectivityProvider`/`isOfflineProvider` going online and app start).
-- Use `ApiClient.postJson` with `client_command_id`; map `ApiException.isConflict/isForbidden/isNotFound` to CONFLICT.
-- `image_picker` + `path_provider` are already dependencies (copy files to app documents dir).
+## Offline layer (M2)
+- Read cache: `features/jobs/caching_jobs_repository.dart` wraps `ApiJobsRepository` (provider `jobsRepositoryProvider`).
+  Success -> write-through to `cached_jobs` (org-scoped, `fetched_at` = synced time, history capped at 50);
+  `NetworkException` -> served from cache with `stale`/`syncedAt` (UI: `StaleDataBanner`). 403/404 on detail evicts the row.
+  Sign-in as a different user clears the read cache.
+- Outbox: `features/outbox/`. `OutboxRepository` (enqueue NOTE in one transaction, validates jpeg/png/webp <= 10 MiB,
+  copies photos to `<docs>/outbox/<command id>/<n>.<ext>`, only for cached jobs with ACTIVE assignment, not CLOSED/CANCELED).
+  `OutboxSyncEngine` (pure Dart, single-flight): per command upload photos (`client_command_id` + `client_index`, file id
+  persisted at once) then POST note with the same `client_command_id`. 200 replay == 201 -> delete. Network/5xx/429 -> PENDING,
+  attempts+1, backoff 5s..5min with jitter. 401 -> stop, queue kept. 403/404/409/other 4xx -> CONFLICT (reason + `error_code`),
+  never auto-deleted; user chooses Copy text / Retry / Discard (confirm). FIFO per request; only current user + org.
+- `SyncController` (watched from `FixFlowApp`): app start (SYNCING->PENDING), reconnect, simulate-offline off, sign-in/org switch,
+  manual Retry, 30 s timer while items wait. Sync is gated on `canSyncNow` (dev switch + radio), NOT `networkReachableProvider`.
+- Offline gate for online-only actions (MOB-08): `core/widgets/requires_connection.dart` (`RequiresConnection`, `RequiresConnectionLabel`),
+  state = `isOfflineProvider`. Never fake an action locally.
+- Tests: `test/outbox_test.dart`, `caching_and_migration_test.dart`, `outbox_ui_test.dart`, `sync_controller_test.dart`;
+  live (needs backend): `LIVE_API_URL=http://localhost:8000 flutter test test/live` (writes demo data; run `reset-demo` after).
 
 ## Extension points for M3
 - `features/jobs/job_actions.dart` -> `JobActionsSection` (clearly marked): replace the read-only list with

@@ -7,7 +7,9 @@ import '../../core/theme/app_theme.dart';
 import '../../core/util/formatters.dart';
 import '../../core/widgets/chips.dart';
 import '../../core/widgets/section_card.dart';
+import '../../core/widgets/stale_banner.dart';
 import '../../core/widgets/state_views.dart';
+import '../outbox/outbox_widgets.dart';
 import 'job_actions.dart';
 import 'job_models.dart';
 import 'jobs_providers.dart';
@@ -42,12 +44,20 @@ class JobDetailScreen extends ConsumerWidget {
             ),
           ],
         ),
-        data: (job) => RefreshIndicator(
-          onRefresh: () async {
-            ref.invalidate(jobDetailProvider(requestId));
-            await ref.read(jobDetailProvider(requestId).future);
-          },
-          child: JobDetailView(job: job, hint: hint, timezone: tz),
+        data: (job) => Column(
+          children: [
+            if (job.stale)
+              StaleDataBanner(syncedAt: job.syncedAt, timezone: tz),
+            Expanded(
+              child: RefreshIndicator(
+                onRefresh: () async {
+                  ref.invalidate(jobDetailProvider(requestId));
+                  await ref.read(jobDetailProvider(requestId).future);
+                },
+                child: JobDetailView(job: job, hint: hint, timezone: tz),
+              ),
+            ),
+          ],
         ),
       ),
     );
@@ -173,29 +183,11 @@ class JobDetailView extends StatelessWidget {
         // M3: this section becomes the interactive actions area.
         JobActionsSection(job: job, actions: job.allowedActions),
         gap,
-        SectionCard(
-          title: 'Notes',
-          children: [
-            if (job.notes.isEmpty) const Text('No notes yet.'),
-            for (final n in job.notes)
-              Padding(
-                padding: const EdgeInsets.only(bottom: 10),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      '${n.authorName ?? 'Unknown'} · ${humanizeEnum(n.kind)} · '
-                      '${formatDateTime(n.createdAt, timezone)}',
-                      style: const TextStyle(
-                        fontSize: 12,
-                        color: AppColors.muted,
-                      ),
-                    ),
-                    Text(n.body),
-                  ],
-                ),
-              ),
-          ],
+        JobNotesSection(
+          requestId: job.id,
+          notes: job.notes,
+          timezone: timezone,
+          canAddNote: job.allowedActions.contains('add_note'),
         ),
         gap,
         SectionCard(
