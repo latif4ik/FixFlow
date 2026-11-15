@@ -6,6 +6,7 @@ import { useForm } from "react-hook-form";
 import { z } from "zod";
 import { Button, ErrorState, FormField, FormServerError, InlineNote, Input, Panel, Select, Skeleton } from "@/components/ui";
 import type { Schemas } from "@/lib/api";
+import { useAuth } from "@/lib/auth";
 import { qk, useApiMutation, useApiQuery } from "@/lib/query";
 import { AdminPage, SectionHint } from "./shared";
 
@@ -28,10 +29,12 @@ function timezones(current?: string): string[] {
 function OrgForm({ org }: { org: Org }) {
   const zones = useMemo(() => timezones(org.timezone), [org.timezone]);
   const form = useForm<FormValues>({ resolver: zodResolver(schema), defaultValues: { name: org.name, timezone: org.timezone } });
+  const { setOrgTimezone } = useAuth();
   const save = useApiMutation<Org, FormValues>({
     request: (v) => ({ method: "PATCH", path: "/org", body: v }),
     invalidate: (o) => [qk.org.settings(o)],
     successMessage: "Organization settings saved.",
+    onSuccess: (saved) => setOrgTimezone(saved.timezone),
     form,
   });
   return (

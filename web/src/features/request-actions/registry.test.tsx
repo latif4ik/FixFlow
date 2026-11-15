@@ -34,7 +34,7 @@ describe("action registry", () => {
     expect(selectActions(ctx("ADMIN"), "sidebar", custom).map((d) => d.name)).toEqual(["y"]);
   });
 
-  it("ships with empty maps and renders nothing", () => {
+  it("renders nothing for a partial context (no registered actions match)", () => {
     const { container } = render(<RequestActionSlot placement="sidebar" ctx={ctx("DISPATCHER")} />);
     expect(container).toBeEmptyDOMElement();
     expect(screen.queryByText(/panel for/)).not.toBeInTheDocument();

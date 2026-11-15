@@ -102,4 +102,27 @@ describe("QueuePage", () => {
     await userEvent.selectOptions(screen.getByLabelText("Technician"), "t1");
     expect(mockRouter.replace).toHaveBeenLastCalledWith("/queue?technician_id=t1");
   });
+
+  it("shows Technician and Appointment columns in the org timezone", async () => {
+    server.use(
+      http.get(apiUrl("/requests"), () =>
+        HttpResponse.json({
+          items: [item(14, { technician: { membership_id: "t1", name: "Tech One" }, appointment: { start_at: "2026-11-18T09:00:00Z", end_at: "2026-11-18T10:30:00Z" } }), item(15)],
+          total: 2,
+          page: 1,
+          page_size: 20,
+        }),
+      ),
+      http.get(apiUrl("/categories"), () => HttpResponse.json({ items: [], total: 0, page: 1, page_size: 100 })),
+      http.get(apiUrl("/properties"), () => HttpResponse.json({ items: [], total: 0, page: 1, page_size: 100 })),
+      http.get(apiUrl("/technicians"), () => HttpResponse.json({ items: [], total: 0, page: 1, page_size: 100 })),
+    );
+    renderWithProviders(<QueuePage />, { route: "/queue" });
+    const table = await screen.findByRole("region", { name: "Requests" });
+    expect(await within(table).findByRole("columnheader", { name: "Technician" })).toBeInTheDocument();
+    expect(within(table).getByRole("columnheader", { name: "Appointment" })).toBeInTheDocument();
+    expect(within(table).getByText("Tech One")).toBeInTheDocument();
+    expect(within(table).getByText(/18 Nov, 15:00/)).toBeInTheDocument(); // 09:00Z in Asia/Bishkek
+    expect(within(table).getByText("Unassigned")).toBeInTheDocument();
+  });
 });

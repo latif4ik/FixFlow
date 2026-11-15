@@ -6,7 +6,7 @@ import { createContext, useCallback, useContext, useEffect, useMemo, useState, u
 import type { ReactNode } from "react";
 import { api, apiAuth } from "@/lib/api";
 import type { LoginResponse, MembershipOut, Role, UserBrief } from "@/lib/api";
-import { ROLE_HOME } from "@/lib/nav";
+import { ROLE_HOME, landingFor } from "@/lib/nav";
 import { clearStoredSession, loadSession, saveSession } from "./session";
 import type { StoredSession } from "./session";
 
@@ -24,9 +24,13 @@ export interface AuthContextValue {
   timezone: string;
   role: Role | null;
   /** Stores the login response. Returns the path to navigate to (role home or /select-org). */
-  completeLogin: (res: LoginResponse) => string;
+  completeLogin: (res: LoginResponse, next?: string | null) => string;
+  /** True after an explicit sign-out: the guard must not remember the page as a `next` target. */
+  signedOut: boolean;
   /** Explicit org switch: clears cached server state, resets live connection, goes to the role home. */
   switchOrg: (orgId: string) => void;
+  /** Updates the selected org's timezone in the session (after an admin saves it) and refreshes org-scoped data. */
+  setOrgTimezone: (timezone: string) => void;
   logout: () => Promise<void>;
   markExpired: () => void;
 }
@@ -40,6 +44,8 @@ function homeFor(m: MembershipOut): string {
 interface StoreState {
   status: AuthStatus;
   session: StoredSession | null;
+  /** Set by an explicit sign-out only (not by session expiry). */
+  signedOut?: boolean;
 }
 
 /** Small external store so hydration from sessionStorage does not need setState-in-effect. One per provider. */
@@ -65,7 +71,7 @@ export function AuthProvider({ children, initialSession }: { children: ReactNode
   const queryClient = useQueryClient();
   const router = useRouter();
   const [store] = useState(() => createAuthStore(initialSession));
-  const { status, session } = useSyncExternalStore(store.subscribe, store.get, store.get);
+  const { status, session, signedOut = false } = useSyncExternalStore(store.subscribe, store.get, store.get);
 
   useEffect(() => {
     if (initialSession !== undefined) return;
@@ -93,7 +99,7 @@ export function AuthProvider({ children, initialSession }: { children: ReactNode
   }, [markExpired]);
 
   const completeLogin = useCallback(
-    (res: LoginResponse) => {
+    (res: LoginResponse, nextPath?: string | null) => {
       queryClient.clear();
       const only = res.memberships.length === 1 ? res.memberships[0] : undefined;
       const next: StoredSession = {
@@ -106,7 +112,7 @@ export function AuthProvider({ children, initialSession }: { children: ReactNode
       saveSession(next);
       apiAuth.set({ token: next.token, orgId: next.orgId });
       store.set({ status: "authenticated", session: next });
-      return only ? homeFor(only) : "/select-org";
+      return only ? landingFor(only.role, nextPath) : "/select-org";
     },
     [queryClient, store],
   );
@@ -129,6 +135,19 @@ export function AuthProvider({ children, initialSession }: { children: ReactNode
     [store, queryClient, router],
   );
 
+  const setOrgTimezone = useCallback(
+    (timezone: string) => {
+      const cur = store.get().session;
+      if (!cur?.orgId) return;
+      const memberships = cur.memberships.map((m) => (m.organization.id === cur.orgId && m.organization.timezone !== timezone ? { ...m, organization: { ...m.organization, timezone } } : m));
+      const next = { ...cur, memberships };
+      saveSession(next);
+      store.set({ ...store.get(), session: next });
+      void queryClient.invalidateQueries({ queryKey: ["org", cur.orgId] });
+    },
+    [store, queryClient],
+  );
+
   const logout = useCallback(async () => {
     try {
       await api.post("/auth/logout");
@@ -138,8 +157,8 @@ export function AuthProvider({ children, initialSession }: { children: ReactNode
     clearStoredSession();
     apiAuth.clear();
     queryClient.clear();
-    store.set({ status: "unauthenticated", session: null });
-    router.push("/login");
+    store.set({ status: "unauthenticated", session: null, signedOut: true });
+    router.replace("/login");
   }, [store, queryClient, router]);
 
   const value = useMemo<AuthContextValue>(() => {
@@ -154,11 +173,13 @@ export function AuthProvider({ children, initialSession }: { children: ReactNode
       timezone: membership?.organization.timezone ?? "UTC",
       role: membership?.role ?? null,
       completeLogin,
+      signedOut,
       switchOrg,
+      setOrgTimezone,
       logout,
       markExpired,
     };
-  }, [session, status, completeLogin, switchOrg, logout, markExpired]);
+  }, [session, status, signedOut, completeLogin, switchOrg, setOrgTimezone, logout, markExpired]);
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
 }

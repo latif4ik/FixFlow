@@ -68,4 +68,11 @@ describe("request detail shell", () => {
     expect(await screen.findByText("Request not found")).toBeInTheDocument();
     expect(screen.getByText(/Request ID: rid-9/)).toBeInTheDocument();
   });
+
+  it("shows human-readable estimate status, never the raw enum", async () => {
+    server.use(http.get(apiUrl("/requests/r1"), () => HttpResponse.json({ ...base, estimate: { ...base.estimate, status: "AWAITING_APPROVAL" } })));
+    renderWithProviders(<RequestDetailPage requestId="r1" />, { session: fakeSession({ role: "DISPATCHER" }) });
+    expect(await screen.findByText("Version 1 · Awaiting approval")).toBeInTheDocument();
+    expect(screen.queryByText(/Awaiting_approval/i)).not.toBeInTheDocument();
+  });
 });

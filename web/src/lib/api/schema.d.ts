@@ -803,6 +803,10 @@ export interface paths {
          *     clear of time off and active assignments (adjacency is allowed); at most 2 non-overlapping
          *     suggestions per technician, ranked by start, then workload, then name.
          *
+         *     Optional ``from`` / ``to`` (ISO datetimes; naive values are UTC) search only inside
+         *     [max(from, next 15-minute boundary), to] instead of [now, now + horizon_days]; slots must also
+         *     END by ``to``; ``to`` must be after ``from`` and at most 31 days later (else 422).
+         *
          *     Suggestions are ADVISORY and not reserved: assigning still goes through
          *     ``POST``/``PUT /requests/{id}/assignment`` with all guards, so a stale suggestion yields the
          *     normal 409 (schedule_conflict) or 422 (technician_ineligible) there; refresh and retry.
@@ -2233,6 +2237,63 @@ export interface components {
             /** Lines */
             lines: components["schemas"]["EstimateLineIn"][];
         };
+        /**
+         * EstimateListItem
+         * @description ``GET /estimates`` item: the estimate plus a brief of its request.
+         */
+        EstimateListItem: {
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /**
+             * Request Id
+             * Format: uuid
+             */
+            request_id: string;
+            /** Version */
+            version: number;
+            status: components["schemas"]["EstimateStatus"];
+            /** Supersedes Id */
+            supersedes_id: string | null;
+            /** Labor Minutes */
+            labor_minutes: number;
+            /** Labor Rate Minor */
+            labor_rate_minor: number;
+            /** Labor Cost Minor */
+            labor_cost_minor: number;
+            /** Materials Total Minor */
+            materials_total_minor: number;
+            /** Total Minor */
+            total_minor: number;
+            /** Currency */
+            currency: string;
+            /** Notes */
+            notes: string | null;
+            /** Lines */
+            lines: components["schemas"]["EstimateLineOut"][];
+            created_by: components["schemas"]["PersonBrief"] | null;
+            /**
+             * Created At
+             * Format: date-time
+             */
+            created_at: string;
+            /** Submitted At */
+            submitted_at: string | null;
+            submitted_by: components["schemas"]["PersonBrief"] | null;
+            /** Decided At */
+            decided_at: string | null;
+            decided_by: components["schemas"]["PersonBrief"] | null;
+            /** Decision Reason */
+            decision_reason: string | null;
+            /** Withdrawn At */
+            withdrawn_at: string | null;
+            withdrawn_by: components["schemas"]["PersonBrief"] | null;
+            /** Withdraw Reason */
+            withdraw_reason: string | null;
+            request?: components["schemas"]["EstimateRequestBrief"] | null;
+        };
         /** EstimateOut */
         EstimateOut: {
             /**
@@ -2294,6 +2355,18 @@ export interface components {
             labor_rate_minor?: number | null;
             /** Notes */
             notes?: string | null;
+        };
+        /** EstimateRequestBrief */
+        EstimateRequestBrief: {
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /** Display Id */
+            display_id: string;
+            /** Title */
+            title: string;
         };
         /**
          * EstimateStatus
@@ -2966,6 +3039,8 @@ export interface components {
             plan_id?: string | null;
             /** Occurrence Date */
             occurrence_date?: string | null;
+            technician?: components["schemas"]["PersonBrief"] | null;
+            appointment?: components["schemas"]["AppointmentBrief"] | null;
             /** Overdue By Minutes */
             overdue_by_minutes: number;
             /** Escalated At */
@@ -3037,10 +3112,10 @@ export interface components {
             /** Page Size */
             page_size: number;
         };
-        /** Page[EstimateOut] */
-        Page_EstimateOut_: {
+        /** Page[EstimateListItem] */
+        Page_EstimateListItem_: {
             /** Items */
-            items: components["schemas"]["EstimateOut"][];
+            items: components["schemas"]["EstimateListItem"][];
             /** Total */
             total: number;
             /** Page */
@@ -3521,6 +3596,8 @@ export interface components {
             plan_id?: string | null;
             /** Occurrence Date */
             occurrence_date?: string | null;
+            technician?: components["schemas"]["PersonBrief"] | null;
+            appointment?: components["schemas"]["AppointmentBrief"] | null;
             /** Description */
             description: string;
             organization: components["schemas"]["OrgRef"];
@@ -3550,7 +3627,6 @@ export interface components {
             /** Allowed Actions */
             allowed_actions: string[];
             assignment?: components["schemas"]["AssignmentBrief"] | null;
-            appointment?: components["schemas"]["AppointmentBrief"] | null;
             estimate?: components["schemas"]["EstimateSummary"] | null;
             sla?: components["schemas"]["SlaOut"] | null;
             /** Materials */
@@ -3594,6 +3670,8 @@ export interface components {
             plan_id?: string | null;
             /** Occurrence Date */
             occurrence_date?: string | null;
+            technician?: components["schemas"]["PersonBrief"] | null;
+            appointment?: components["schemas"]["AppointmentBrief"] | null;
         };
         /** RequestPatch */
         RequestPatch: {
@@ -6279,6 +6357,8 @@ export interface operations {
                 horizon_days?: number;
                 duration_minutes?: number | null;
                 limit?: number;
+                from?: string | null;
+                to?: string | null;
             };
             header?: {
                 "X-Org-Id"?: string | null;
@@ -6860,7 +6940,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["Page_EstimateOut_"];
+                    "application/json": components["schemas"]["Page_EstimateListItem_"];
                 };
             };
             /** @description Validation Error */

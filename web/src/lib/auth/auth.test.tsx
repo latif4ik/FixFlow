@@ -1,8 +1,10 @@
-import { act, screen } from "@testing-library/react";
+import { act, screen, waitFor } from "@testing-library/react";
 import { describe, expect, it } from "vitest";
 import { apiAuth } from "@/lib/api/session-store";
 import { fakeSession, membership, ORG_A, ORG_B, renderWithProviders } from "@/test/render";
 import { mockRouter } from "@/test/navigation-mock";
+import { landingFor } from "@/lib/nav";
+import { apiUrl, http, HttpResponse, server } from "@/test/server";
 import { useAuth } from "./auth-context";
 import { RouteGuard } from "./route-guard";
 
@@ -90,4 +92,32 @@ describe("RouteGuard", () => {
     expect(queryClient.getQueryCache().getAll()).toHaveLength(0);
     expect(apiAuth.get().token).toBeNull();
   });
+
+describe("sign-out", () => {
+  it("explicit sign-out goes to /login with no next, even from a deep page", async () => {
+    server.use(http.post(apiUrl("/auth/logout"), () => new HttpResponse(null, { status: 204 })));
+    function Out() {
+      const a = useAuth();
+      return <button onClick={() => void a.logout()}>out</button>;
+    }
+    renderWithProviders(
+      <RouteGuard>
+        <Out />
+      </RouteGuard>,
+      { route: "/schedule" },
+    );
+    await act(async () => screen.getByText("out").click());
+    await waitFor(() => expect(mockRouter.replace).toHaveBeenCalledWith("/login"));
+    expect(mockRouter.replace.mock.calls.flat().filter((c) => String(c).includes("next"))).toEqual([]);
+    expect(mockRouter.push.mock.calls.flat().filter((c) => String(c).includes("next"))).toEqual([]);
+  });
+});
+
+describe("landingFor", () => {
+  it("keeps next only for allowed roles", () => {
+    expect(landingFor("DISPATCHER", "/schedule?view=week")).toBe("/schedule?view=week");
+    expect(landingFor("REQUESTER", "/schedule")).toBe("/requests");
+    expect(landingFor("DISPATCHER", null)).toBe("/dashboard");
+  });
+});
 });

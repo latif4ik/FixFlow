@@ -2,12 +2,13 @@
 
 import { AlertTriangle, TimerOff, UserRound } from "lucide-react";
 import Link from "next/link";
-import { buttonStyles, EmptyState, ErrorState, PageHeader, Panel, Skeleton, StatusBadge } from "@/components/ui";
+import { buttonStyles, DateTime, EmptyState, ErrorState, PageHeader, Panel, Skeleton, StatusBadge } from "@/components/ui";
 import type { Page, RequestListItem, Schemas } from "@/lib/api";
 import { useOrgTimezone } from "@/lib/auth";
 import { formatDateTime, formatDuration } from "@/lib/format";
 import { qk, useApiQuery } from "@/lib/query";
 import { cn } from "@/lib/cn";
+import { rowActionFor, rowActionHref } from "@/lib/labels";
 import { DayTimeline, useTodaySchedule } from "./day-timeline";
 import { useReportFilters } from "./filters";
 import { DailyChart, DistributionChart, EstimatesCard, ReportFilterBar, StatusCounts, UtilizationCard, useDaily, useSummary } from "./report-widgets";
@@ -15,7 +16,6 @@ import { formatDayLong, formatYmd } from "./tz";
 
 type OverdueQueue = Schemas["OverdueQueue"];
 
-const UNASSIGNED = new Set(["SUBMITTED", "TRIAGED", "REOPENED"]);
 
 function Kpi({ label, value, note }: { label: string; value: React.ReactNode; note?: React.ReactNode }) {
   return (
@@ -102,14 +102,19 @@ export function DashboardPage() {
                       </p>
                       <p className="flex flex-wrap items-center gap-x-3 gap-y-1 text-[13px] text-muted">
                         <span>
-                          {r.property.name} · {r.category.name}
+                          {r.property.name} · {r.technician ? r.technician.name : "Unassigned"} · {r.category.name}
                         </span>
+                        {r.appointment && (
+                          <span>
+                            <DateTime value={r.appointment.start_at} style="short" /> - <DateTime value={r.appointment.end_at} style="time" />
+                          </span>
+                        )}
                         <StatusBadge status={r.status} />
                       </p>
                     </div>
-                    {UNASSIGNED.has(r.status) ? (
-                      <Link href={`/requests/${r.id}#assign`} className={cn(buttonStyles({ size: "md" }))}>
-                        Smart assign <span className="sr-only">{r.display_id}</span>
+                    {rowActionFor(r.status) !== "open" ? (
+                      <Link href={rowActionHref(r.id, r.status)} className={cn(buttonStyles({ size: "md" }))}>
+                        {rowActionFor(r.status) === "assign" ? "Smart assign" : "Triage"} <span className="sr-only">{r.display_id}</span>
                       </Link>
                     ) : (
                       <Link href={`/requests/${r.id}`} className={cn(buttonStyles({ variant: "secondary", size: "md" }))}>

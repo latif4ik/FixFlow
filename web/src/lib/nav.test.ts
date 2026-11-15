@@ -1,13 +1,16 @@
 import { describe, expect, it } from "vitest";
 import { safeNext } from "./auth/session";
-import { ROLE_HOME, isNavActive, navFor, rolesForPath } from "./nav";
+import { ROLE_HOME, drawerNavFor, isNavActive, navFor, rolesForPath } from "./nav";
 
 describe("role navigation", () => {
   it("maps each role to its menu", () => {
     expect(navFor("REQUESTER").map((i) => i.href)).toEqual(["/requests", "/requests/new", "/notifications"]);
-    expect(navFor("DISPATCHER").map((i) => i.label)).toEqual(["Dashboard", "Request queue", "Schedule board", "Properties and assets", "Estimates", "Overdue", "Notifications"]);
+    expect(navFor("DISPATCHER").map((i) => i.label)).toEqual(["Dashboard", "Request queue", "Schedule board", "Properties and assets", "Estimates", "Overdue"]);
     expect(navFor("ADMIN").map((i) => i.href)).toContain("/admin");
     expect(navFor("DISPATCHER").map((i) => i.href)).not.toContain("/admin");
+    expect(navFor("DISPATCHER").map((i) => i.href)).not.toContain("/notifications");
+    expect(navFor("ADMIN").map((i) => i.label)).toEqual(["Dashboard", "Request queue", "Schedule board", "Properties and assets", "Estimates", "Overdue", "Admin"]);
+    for (const role of ["DISPATCHER", "ADMIN"] as const) expect(drawerNavFor(role).at(-1)?.href).toBe("/notifications");
     expect(navFor("TECHNICIAN").map((i) => i.href)).toEqual(["/jobs", "/notifications"]);
     expect(navFor("DISPATCHER").find((i) => i.href === "/overdue")?.badge).toBe("overdue");
   });

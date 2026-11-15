@@ -4,7 +4,7 @@ import { renderWithProviders } from "@/test/render";
 import { apiUrl, http, HttpResponse, server } from "@/test/server";
 import { addDays, localDate, localMinutes, weekStart, zonedToUtcIso } from "../lib/tz";
 import { blockPosition, visibleRange } from "./layout";
-import { SchedulePage } from "./schedule-page";
+import { SchedulePage, WEEK_GRID } from "./schedule-page";
 
 const TZ = "Asia/Bishkek"; // UTC+6, no DST
 
@@ -111,5 +111,20 @@ describe("SchedulePage", () => {
     expect(within(screen.getByRole("region", { name: "Week schedule" })).getAllByText(/^Mon 16 Nov$/)).toHaveLength(1);
     expect(url!.searchParams.get("from")).toBe("2026-11-15T18:00:00.000Z");
     expect(url!.searchParams.get("to")).toBe("2026-11-22T18:00:00.000Z");
+  });
+
+  it("week view: header and every technician row share one grid template so day columns align", async () => {
+    server.use(
+      http.get(apiUrl("/technicians"), () => HttpResponse.json({ items: [], total: 0, page: 1, page_size: 100 })),
+      http.get(apiUrl("/schedule"), () => HttpResponse.json(schedule())),
+    );
+    renderWithProviders(<SchedulePage />, { route: "/schedule", search: { view: "week", date: "2026-11-18" } });
+    await screen.findByTestId("block-REQ-7");
+    const region = screen.getByRole("region", { name: "Week schedule" });
+    const rows = [...region.querySelectorAll<HTMLElement>("[data-week-row]")];
+    expect(rows.length).toBeGreaterThanOrEqual(2);
+    expect(rows[0]!.dataset.weekRow).toBe("header");
+    for (const r of rows) expect(r.style.gridTemplateColumns).toBe(WEEK_GRID);
+    expect(WEEK_GRID).toMatch(/^160px repeat\(7, minmax\(140px, 1fr\)\)$/);
   });
 });

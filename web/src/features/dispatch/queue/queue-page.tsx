@@ -192,6 +192,19 @@ export function QueuePage() {
       header: "SLA",
       cell: (r) => (r.status === "CLOSED" || r.status === "CANCELED" ? <span className="text-muted">-</span> : <SlaBadge state={r.sla_state} dueAt={r.sla_due_at} />),
     },
+    { key: "tech", header: "Technician", cell: (r) => (r.technician ? r.technician.name : <span className="text-muted">Unassigned</span>) },
+    {
+      key: "appointment",
+      header: "Appointment",
+      cell: (r) =>
+        r.appointment ? (
+          <span className="whitespace-nowrap">
+            <DateTime value={r.appointment.start_at} style="short" /> - <DateTime value={r.appointment.end_at} style="time" />
+          </span>
+        ) : (
+          <span className="text-muted">-</span>
+        ),
+    },
     { key: "created", header: "Created", cell: (r) => <DateTime value={r.created_at} style="short" /> },
   ];
 

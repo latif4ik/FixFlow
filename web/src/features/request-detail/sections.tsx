@@ -1,5 +1,6 @@
 "use client";
 
+import { estimateStatusLabel } from "@/lib/labels";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { EyeOff, Globe, Star } from "lucide-react";
 import Link from "next/link";
@@ -207,7 +208,7 @@ export function EstimateSummaryPanel({ detail }: { detail: RequestDetail }) {
   const e = detail.estimate;
   if (!e) return null;
   return (
-    <Panel title="Estimate" actions={<Badge tone="neutral">{`Version ${e.version} · ${e.status.charAt(0)}${e.status.slice(1).toLowerCase()}`}</Badge>}>
+    <Panel title="Estimate" actions={<Badge tone="neutral">{`Version ${e.version} · ${estimateStatusLabel(e.status)}`}</Badge>}>
       <ul className="divide-y divide-border text-sm">
         {e.lines.map((l) => (
           <li key={l.id} className="flex items-start justify-between gap-3 py-2">

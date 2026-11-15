@@ -38,6 +38,20 @@ describe("TriagePanel", () => {
     expect(screen.getByText(/Triage is only available while a request is Submitted/)).toBeInTheDocument();
   });
 
+  it("shows the request's current category after the list loads, even when it is not the first option", async () => {
+    server.use(
+      http.get(apiUrl("/categories"), () =>
+        HttpResponse.json({ items: [{ ...CATEGORY_HVAC, id: "cat-el", name: "Electrical" }, CATEGORY_HVAC], total: 2, page: 1, page_size: 100 }),
+      ),
+    );
+    renderWithProviders(<TriagePanel ctx={makeCtx()} />);
+    const form = screen.getByRole("form", { name: "Change category or priority" });
+    await screen.findByRole("option", { name: "Electrical" });
+    const select = within(form).getByLabelText("Category") as HTMLSelectElement;
+    expect(select.value).toBe(CATEGORY_HVAC.id);
+    expect(select.selectedOptions[0]?.textContent).toBe(CATEGORY_HVAC.name);
+  });
+
   it("requires a reason to change category/priority and PATCHes only the changed fields", async () => {
     categories();
     let body: unknown = null;

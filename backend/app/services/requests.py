@@ -442,7 +442,53 @@ def list_requests_with_rows(
         ),
     }[sort]
     rows, total = paginate_rows(db, stmt.order_by(*order), params)
-    return [(_list_item(*r, now=now), r[0]) for r in rows], total
+    current = _current_assignments(db, ctx, [r[0].id for r in rows])
+    out = []
+    for r in rows:
+        a = current.get(r[0].id)
+        out.append(
+            (
+                _list_item(
+                    *r,
+                    now=now,
+                    technician=PersonBrief(membership_id=a[0].technician_membership_id, name=a[1])
+                    if a
+                    else None,
+                    appointment=AppointmentBrief(start_at=a[0].start_at, end_at=a[0].end_at)
+                    if a
+                    else None,
+                ),
+                r[0],
+            )
+        )
+    return out, total
+
+
+def _current_assignments(
+    db: Session, ctx: Ctx, request_ids: list[uuid.UUID]
+) -> dict[uuid.UUID, tuple[Assignment, str]]:
+    """Batched (one query): per request the ACTIVE assignment, else the latest COMPLETED one."""
+    if not request_ids:
+        return {}
+    rows = db.execute(
+        select(Assignment, User.full_name)
+        .join(
+            Membership,
+            (Membership.organization_id == Assignment.organization_id)
+            & (Membership.id == Assignment.technician_membership_id),
+        )
+        .join(User, User.id == Membership.user_id)
+        .where(
+            Assignment.organization_id == ctx.org_id,
+            Assignment.request_id.in_(request_ids),
+            or_(Assignment.active.is_(True), Assignment.status == AssignmentStatus.COMPLETED),
+        )
+        .order_by(Assignment.active.desc(), Assignment.end_at.desc())
+    ).all()
+    out: dict[uuid.UUID, tuple[Assignment, str]] = {}
+    for a, name in rows:
+        out.setdefault(a.request_id, (a, name))
+    return out
 
 
 def _list_base(ctx: Ctx) -> Any:
@@ -484,6 +530,8 @@ def _list_item(
     asset: Asset | None,
     requester_name: str | None,
     now: datetime | None = None,
+    technician: PersonBrief | None = None,
+    appointment: AppointmentBrief | None = None,
 ) -> RequestListItem:
     return RequestListItem(
         id=req.id,
@@ -506,6 +554,8 @@ def _list_item(
         sla_due_at=req.sla_due_at,
         plan_id=req.plan_id,
         occurrence_date=req.occurrence_date,
+        technician=technician,
+        appointment=appointment,
     )
 
 
@@ -696,14 +746,16 @@ def get_detail(db: Session, ctx: Ctx, request_id: uuid.UUID) -> RequestDetail:
         now,
     )
     assignment = _current_assignment(db, ctx, req)
+    base_data = base.model_dump()
+    base_data["technician"] = assignment.technician if assignment else None
+    base_data["appointment"] = (
+        AppointmentBrief(start_at=assignment.start_at, end_at=assignment.end_at)
+        if assignment
+        else None
+    )
     return RequestDetail(
-        **base.model_dump(),
+        **base_data,
         assignment=assignment,
-        appointment=(
-            AppointmentBrief(start_at=assignment.start_at, end_at=assignment.end_at)
-            if assignment
-            else None
-        ),
         description=req.description,
         organization=OrgRef(id=org.id, name=org.name),
         created_by=_person(names, req.created_by_membership_id),

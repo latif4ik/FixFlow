@@ -63,4 +63,25 @@ describe("LoginForm", () => {
     expect(mockRouter.replace).not.toHaveBeenCalled();
     expect(screen.getByRole("button", { name: "Sign in" })).toBeEnabled();
   });
+
+  async function loginAs(role: "REQUESTER" | "DISPATCHER", search: Record<string, string>) {
+    server.use(
+      http.post(apiUrl("/auth/login"), () => HttpResponse.json({ token: "t", expires_at: new Date(Date.now() + 3600_000).toISOString(), user, memberships: [membership(role, ORG_A)] })),
+    );
+    renderWithProviders(<LoginForm />, { session: null, route: "/login", search });
+    await userEvent.type(screen.getByLabelText(/Email/), "d@x.demo");
+    await userEvent.type(screen.getByLabelText(/Password/), "x");
+    await userEvent.click(screen.getByRole("button", { name: "Sign in" }));
+  }
+
+  it("honors ?next only when the role may view that path", async () => {
+    await loginAs("DISPATCHER", { next: "/schedule" });
+    await waitFor(() => expect(mockRouter.replace).toHaveBeenCalledWith("/schedule"));
+  });
+
+  it("ignores ?next the role cannot access and goes to the role home (requester after a dispatcher signed out)", async () => {
+    await loginAs("REQUESTER", { next: "/schedule" });
+    await waitFor(() => expect(mockRouter.replace).toHaveBeenCalledWith("/requests"));
+    expect(mockRouter.replace).not.toHaveBeenCalledWith("/schedule");
+  });
 });

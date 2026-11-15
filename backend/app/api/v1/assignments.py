@@ -1,13 +1,14 @@
 """Candidates, assignment commands, technician lifecycle actions, job list and schedule."""
 
 import uuid
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from typing import Annotated, Any, Literal
 
 from fastapi import APIRouter, Depends, Query, Response
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
+from app.core import clock
 from app.core.deps import CurrentCtx, DbDep, R, StaffCtx, require_roles
 from app.core.errors import AppError
 from app.core.idempotency import IdempotencyKeyHeader, run_idempotent
@@ -92,6 +93,8 @@ def suggestions(
     horizon_days: Annotated[int, Query(ge=1, le=31)] = 14,
     duration_minutes: Annotated[int | None, Query(ge=30, le=720)] = None,
     limit: Annotated[int, Query(ge=1, le=20)] = 5,
+    from_: Annotated[datetime | None, Query(alias="from")] = None,
+    to: datetime | None = None,
 ) -> dict[str, Any]:
     """Smart Assign: earliest free slots of skilled, active technicians (staff only).
 
@@ -100,6 +103,10 @@ def suggestions(
     category's default duration. Slots are on a 15-minute grid, inside one availability interval,
     clear of time off and active assignments (adjacency is allowed); at most 2 non-overlapping
     suggestions per technician, ranked by start, then workload, then name.
+
+    Optional ``from`` / ``to`` (ISO datetimes; naive values are UTC) search only inside
+    [max(from, next 15-minute boundary), to] instead of [now, now + horizon_days]; slots must also
+    END by ``to``; ``to`` must be after ``from`` and at most 31 days later (else 422).
 
     Suggestions are ADVISORY and not reserved: assigning still goes through
     ``POST``/``PUT /requests/{id}/assignment`` with all guards, so a stale suggestion yields the
@@ -112,8 +119,18 @@ def suggestions(
             "duration_minutes must be a multiple of 15.",
             [{"field": "duration_minutes", "message": "must be a multiple of 15"}],
         )
+    from_ = from_.replace(tzinfo=UTC) if from_ is not None and from_.tzinfo is None else from_
+    to = to.replace(tzinfo=UTC) if to is not None and to.tzinfo is None else to
+    lo = from_ if from_ is not None else clock.now()
+    if to is not None and not lo < to <= lo + timedelta(days=31):
+        raise AppError(
+            422,
+            "validation_error",
+            "to must be after from and at most 31 days later.",
+            [{"field": "to", "message": "must be after from and within 31 days of it"}],
+        )
     req = get_visible_request(db, ctx, request_id)
-    return suggest_svc.suggest(db, ctx, req, horizon_days, duration_minutes, limit)
+    return suggest_svc.suggest(db, ctx, req, horizon_days, duration_minutes, limit, from_, to)
 
 
 @router.post("/requests/{request_id}/assignment", response_model=AssignmentResult, status_code=201)

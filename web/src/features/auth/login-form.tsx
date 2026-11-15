@@ -10,7 +10,7 @@ import { Button, Card, FormField, FormServerError, Input } from "@/components/ui
 import type { LoginResponse } from "@/lib/api/types";
 import { useAuth } from "@/lib/auth/auth-context";
 import { safeNext } from "@/lib/auth/session";
-import { ROLE_HOME } from "@/lib/nav";
+import { landingFor } from "@/lib/nav";
 import { applyServerErrors, useApiMutation } from "@/lib/query/hooks";
 
 const schema = z.object({
@@ -28,15 +28,14 @@ export function LoginForm() {
 
   // Already signed in: skip the form.
   useEffect(() => {
-    if (status === "authenticated") router.replace(next ?? (role ? ROLE_HOME[role] : "/select-org"));
+    if (status === "authenticated") router.replace(role ? landingFor(role, next) : "/select-org");
   }, [status, role, next, router]);
 
   const login = useApiMutation<LoginResponse, Values>({
     request: (v) => ({ path: "/auth/login", body: { email: v.email, password: v.password }, anonymous: true }),
     errorMessage: false,
     onSuccess: (res) => {
-      const target = completeLogin(res);
-      router.replace(target === "/select-org" || !next ? target : next);
+      router.replace(completeLogin(res, next));
     },
     onError: (e) => {
       applyServerErrors(form, e);

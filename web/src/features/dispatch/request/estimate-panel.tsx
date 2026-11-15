@@ -1,5 +1,6 @@
 "use client";
 
+import { requestStatusText } from "@/lib/labels";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { FilePlus2, Plus, Send, Trash2, Undo2 } from "lucide-react";
 import { useState } from "react";
@@ -401,12 +402,12 @@ export function EstimatePanel({ ctx }: RequestActionProps) {
         <Editor key={draft.id} ctx={ctx} draft={draft} />
       ) : latest ? (
         <>
-          {open ? <NewRevision ctx={ctx} latest={latest} /> : <InlineNote>Estimates cannot be changed while the request is {ctx.detail.status.toLowerCase()}.</InlineNote>}
+          {open ? <NewRevision ctx={ctx} latest={latest} /> : <InlineNote>Estimates cannot be changed while the request is {requestStatusText(ctx.detail.status)}.</InlineNote>}
         </>
       ) : open ? (
         <Editor key="new" ctx={ctx} draft={undefined} />
       ) : (
-        <InlineNote>No estimate exists and the request is {ctx.detail.status.toLowerCase()}, so one cannot be created.</InlineNote>
+        <InlineNote>No estimate exists and the request is {requestStatusText(ctx.detail.status)}, so one cannot be created.</InlineNote>
       )}
       {history.length > 0 && (
         <section aria-labelledby="est-versions" className="flex flex-col gap-3">

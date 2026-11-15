@@ -93,6 +93,18 @@ class EstimateOut(BaseModel):
     withdraw_reason: str | None
 
 
+class EstimateRequestBrief(BaseModel):
+    id: uuid.UUID
+    display_id: str
+    title: str
+
+
+class EstimateListItem(EstimateOut):
+    """``GET /estimates`` item: the estimate plus a brief of its request."""
+
+    request: EstimateRequestBrief | None = None
+
+
 class EstimateSummary(BaseModel):
     """Current-estimate summary embedded in the request detail."""
 

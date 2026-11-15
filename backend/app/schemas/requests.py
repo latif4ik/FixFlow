@@ -131,6 +131,11 @@ class SlaOut(BaseModel):
     outcome: str | None  # MET | BREACHED once completed or canceled
 
 
+class AppointmentBrief(BaseModel):
+    start_at: datetime
+    end_at: datetime
+
+
 class RequestListItem(BaseModel):
     id: uuid.UUID
     number: int
@@ -149,6 +154,9 @@ class RequestListItem(BaseModel):
     sla_due_at: datetime | None = None
     plan_id: uuid.UUID | None = None
     occurrence_date: date | None = None
+    # Current ACTIVE assignment, else the most recent COMPLETED one.
+    technician: PersonBrief | None = None
+    appointment: AppointmentBrief | None = None
 
 
 class FileOut(BaseModel):
@@ -217,11 +225,6 @@ class OrgRef(BaseModel):
     name: str
 
 
-class AppointmentBrief(BaseModel):
-    start_at: datetime
-    end_at: datetime
-
-
 class AssignmentBrief(BaseModel):
     """Summary embedded in the request detail."""
 
@@ -248,7 +251,6 @@ class RequestDetail(RequestListItem):
     timeline: list[TimelineItem]
     allowed_actions: list[str]
     assignment: AssignmentBrief | None = None
-    appointment: AppointmentBrief | None = None
     # Current estimate (caller-visible) and recorded material usage (staff / technicians).
     estimate: EstimateSummary | None = None
     sla: SlaOut | None = None

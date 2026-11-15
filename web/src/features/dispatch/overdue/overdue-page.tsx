@@ -7,22 +7,30 @@ import { buttonStyles } from "@/components/ui/button";
 import type { Column } from "@/components/ui";
 import type { Page, RequestListItem, RequestStatus, Schemas } from "@/lib/api/types";
 import { formatDuration } from "@/lib/format";
+import { rowActionFor, rowActionHref } from "@/lib/labels";
 import { useApiQuery } from "@/lib/query/hooks";
 import { qk } from "@/lib/query/keys";
 
 type OverdueItem = Schemas["OverdueItem"];
-const UNASSIGNED: RequestStatus[] = ["SUBMITTED", "TRIAGED", "REOPENED"];
 
 function RowAction({ id, status, title }: { id: string; status: RequestStatus; title: string }) {
-  if (UNASSIGNED.includes(status)) {
+  const action = rowActionFor(status);
+  if (action === "assign") {
     return (
-      <Link href={`/requests/${id}#assign`} aria-label={`Smart assign ${title}`} className={buttonStyles({ size: "sm" })}>
+      <Link href={rowActionHref(id, status)} aria-label={`Smart assign ${title}`} className={buttonStyles({ size: "sm" })}>
         <Sparkles className="size-4" aria-hidden /> Smart assign
       </Link>
     );
   }
+  if (action === "triage") {
+    return (
+      <Link href={rowActionHref(id, status)} aria-label={`Triage ${title}`} className={buttonStyles({ size: "sm" })}>
+        Triage
+      </Link>
+    );
+  }
   return (
-    <Link href={`/requests/${id}`} aria-label={`Open ${title}`} className={buttonStyles({ size: "sm", variant: "secondary" })}>
+    <Link href={rowActionHref(id, status)} aria-label={`Open ${title}`} className={buttonStyles({ size: "sm", variant: "secondary" })}>
       Open
     </Link>
   );
@@ -57,7 +65,21 @@ export function OverduePage() {
 
   const overdueCols: Column<OverdueItem>[] = [
     ...idCol<OverdueItem>(),
-    { key: "property", header: "Property", cell: (r) => r.property.name },
+    {
+      key: "property",
+      header: "Property · Technician",
+      cell: (r) => (
+        <span>
+          {r.property.name}
+          <span className="text-muted"> · {r.technician ? r.technician.name : "Unassigned"}</span>
+          {r.appointment && (
+            <span className="block text-xs text-muted">
+              <DateTime value={r.appointment.start_at} style="short" /> - <DateTime value={r.appointment.end_at} style="time" />
+            </span>
+          )}
+        </span>
+      ),
+    },
     { key: "priority", header: "Priority", cell: (r) => <PriorityBadge priority={r.priority} /> },
     { key: "status", header: "Status", cell: (r) => <StatusBadge status={r.status} /> },
     {

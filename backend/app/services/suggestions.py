@@ -87,15 +87,20 @@ def find_slots(
     horizon_end: datetime,
     duration: timedelta,
     limit: int = PER_TECH,
+    *,
+    finish_by_end: bool = False,
 ) -> list[Interval]:
-    """Earliest non-overlapping ``duration`` windows (15-min grid) for one technician."""
+    """Earliest non-overlapping ``duration`` windows (15-min grid) for one technician.
+
+    ``finish_by_end`` (explicit from/to window): the slot must also END by ``horizon_end``.
+    """
     busy = _merge(busy)
     slots: list[Interval] = []
     day = start.astimezone(ctx_tz).date()
     last_day = horizon_end.astimezone(ctx_tz).date()
     while day <= last_day and len(slots) < limit:
         for a_start, a_end in eligibility.local_intervals(avail, ctx_tz, day):
-            lo, hi = max(a_start, start), a_end
+            lo, hi = max(a_start, start), (min(a_end, horizon_end) if finish_by_end else a_end)
             if lo >= hi or lo > horizon_end:
                 continue
             for fs, fe in _subtract((lo, hi), busy):
@@ -118,7 +123,10 @@ def suggest(
     horizon_days: int,
     duration_minutes: int | None,
     limit: int,
+    window_from: datetime | None = None,
+    window_to: datetime | None = None,
 ) -> dict[str, Any]:
+    """``window_from``/``window_to`` (UTC) restrict the search to [max(from, next 15 min), to]."""
     if req.status not in SUGGESTABLE:
         raise AppError(
             409,
@@ -138,7 +146,13 @@ def suggest(
 
     now = clock.now()
     start = _next_boundary(now)
-    horizon_end = now + timedelta(days=horizon_days)
+    windowed = window_from is not None or window_to is not None
+    if windowed:
+        if window_from is not None:
+            start = max(start, window_from)
+        horizon_end = window_to or max(start, now) + timedelta(days=horizon_days)
+    else:
+        horizon_end = now + timedelta(days=horizon_days)
     tz = eligibility.tz_of(ctx)
 
     own = get_active_assignment(db, req) if req.status in (S.SCHEDULED, S.ACCEPTED) else None
@@ -185,7 +199,9 @@ def suggest(
     for c in skilled:
         mid = c["membership_id"]
         slots = (
-            find_slots(avail[mid], busy[mid], tz, start, horizon_end, duration)
+            find_slots(
+                avail[mid], busy[mid], tz, start, horizon_end, duration, finish_by_end=windowed
+            )
             if avail[mid]
             else []
         )

@@ -7,8 +7,6 @@ import { useState } from "react";
 import { Avatar, DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuLabel, DropdownMenuSeparator, DropdownMenuTrigger, IconButton } from "@/components/ui";
 import { useAuth } from "@/lib/auth/auth-context";
 import { cn } from "@/lib/cn";
-import { useNow } from "@/lib/use-now";
-import { formatDateTime } from "@/lib/format";
 import { useLiveStatus } from "@/lib/live";
 import { ROLE_HOME, ROLE_LABEL } from "@/lib/nav";
 import { NavLinks } from "./nav-links";
@@ -16,21 +14,14 @@ import { NotificationBell } from "./notification-bell";
 
 function LiveIndicator() {
   const status = useLiveStatus();
-  const { timezone } = useAuth();
-  const now = useNow();
   const label = status === "live" ? "Live" : status === "reconnecting" ? "Reconnecting" : "Offline";
   return (
-    <p role="status" className="hidden items-center gap-2 whitespace-nowrap text-[13px] font-semibold text-muted xl:flex" aria-label={`Updates: ${label}`}>
+    <p role="status" className="hidden items-center gap-2 whitespace-nowrap text-[13px] font-semibold text-muted 2xl:flex" aria-label={`Updates: ${label}`}>
       <span
         aria-hidden
         className={cn("size-2 rounded-pill", status === "live" ? "bg-primary" : status === "reconnecting" ? "animate-pulse bg-warning" : "bg-danger")}
       />
       {label}
-      {now > 0 && (
-        <span className="hidden font-normal 2xl:inline">
-          · {formatDateTime(new Date(now), timezone, "time")} {timezone}
-        </span>
-      )}
     </p>
   );
 }
@@ -107,7 +98,7 @@ function MobileNav() {
   return (
     <RDialog.Root open={open} onOpenChange={setOpen}>
       <RDialog.Trigger asChild>
-        <IconButton aria-label="Open menu" icon={<Menu className="size-5" aria-hidden />} className="xl:hidden" />
+        <IconButton aria-label="Open menu" icon={<Menu className="size-5" aria-hidden />} className="2xl:hidden" />
       </RDialog.Trigger>
       <RDialog.Portal>
         <RDialog.Overlay className="fixed inset-0 z-50 bg-ink/40" />
@@ -115,7 +106,7 @@ function MobileNav() {
           <RDialog.Title className="mb-3 font-heading text-lg font-bold text-ink">Menu</RDialog.Title>
           <RDialog.Description className="sr-only">Main navigation</RDialog.Description>
           <nav aria-label="Main">
-            <NavLinks orientation="vertical" onNavigate={() => setOpen(false)} />
+            <NavLinks orientation="vertical" onNavigate={() => setOpen(false)} withNotifications />
           </nav>
         </RDialog.Content>
       </RDialog.Portal>
@@ -127,7 +118,7 @@ export function TopBar() {
   const { role } = useAuth();
   return (
     <header className="sticky top-0 z-40 border-b border-border bg-surface">
-      <div className="mx-auto flex h-16 max-w-[1440px] items-center gap-2 px-4 sm:gap-3 sm:px-6">
+      <div className="mx-auto flex h-16 max-w-[1680px] items-center gap-2 px-4 sm:gap-3 sm:px-6">
         <MobileNav />
         <Link href={role ? ROLE_HOME[role] : "/"} className="flex items-center gap-2 rounded-md pr-2 font-heading text-lg font-extrabold text-deep">
           <span aria-hidden className="flex size-8 items-center justify-center rounded-md bg-primary text-white">
@@ -135,7 +126,7 @@ export function TopBar() {
           </span>
           FixFlow
         </Link>
-        <nav aria-label="Main" className="ml-2 hidden min-w-0 flex-1 overflow-x-auto xl:block">
+        <nav aria-label="Main" className="ml-2 hidden min-w-0 flex-1 overflow-x-auto 2xl:block">
           <NavLinks />
         </nav>
         <div className="ml-auto flex items-center gap-2 sm:gap-3">

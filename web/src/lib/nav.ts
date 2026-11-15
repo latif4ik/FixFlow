@@ -64,12 +64,21 @@ export function navFor(role: Role): NavItem[] {
         NOTIFICATIONS,
       ];
     case "DISPATCHER":
-      return [...STAFF_ITEMS, NOTIFICATIONS];
+      return [...STAFF_ITEMS];
     case "ADMIN":
-      return [...STAFF_ITEMS, { href: "/admin", label: "Admin", icon: Settings }, NOTIFICATIONS];
+      return [...STAFF_ITEMS, { href: "/admin", label: "Admin", icon: Settings }];
     case "TECHNICIAN":
       return [{ href: "/jobs", label: "My jobs", icon: Hammer }, NOTIFICATIONS];
   }
+}
+
+/**
+ * Items shown in the mobile/menu drawer. Staff and admin reach notifications through the top-bar bell on desktop,
+ * so their main nav omits it; the drawer adds it back (the bell is also visible on small screens, this is a fallback).
+ */
+export function drawerNavFor(role: Role): NavItem[] {
+  const items = navFor(role);
+  return items.some((i) => i.href === NOTIFICATIONS.href) ? items : [...items, NOTIFICATIONS];
 }
 
 export function isNavActive(item: NavItem, pathname: string): boolean {
@@ -94,6 +103,18 @@ const ROUTE_RULES: { test: (p: string) => boolean; roles: Role[] }[] = [
     roles: STAFF,
   },
 ];
+
+/**
+ * Where to go after login: `next` only when this role may view it (otherwise the next user, e.g. a requester after a
+ * dispatcher signed out from /schedule, would land on Forbidden), else the role home.
+ */
+export function landingFor(role: Role, next: string | null | undefined): string {
+  if (next) {
+    const path = next.split(/[?#]/)[0] ?? "";
+    if (path && rolesForPath(path).includes(role)) return next;
+  }
+  return ROLE_HOME[role];
+}
 
 export function rolesForPath(pathname: string): Role[] {
   return ROUTE_RULES.find((r) => r.test(pathname))?.roles ?? ALL;

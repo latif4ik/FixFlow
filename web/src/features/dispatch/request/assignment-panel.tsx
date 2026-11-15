@@ -1,7 +1,7 @@
 "use client";
 
 import { AlertTriangle, CalendarClock, Check, RefreshCw, UserMinus, X } from "lucide-react";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useMemo, useState } from "react";
 import { Badge, Button, ConfirmDialog, EmptyState, ErrorState, FormField, InlineNote, Input, LoadingState, Panel, DateTime } from "@/components/ui";
 import { isApiError } from "@/lib/api/client";
 import type { ApiError } from "@/lib/api/client";
@@ -9,6 +9,8 @@ import type { Page, Schemas } from "@/lib/api/types";
 import { formatDateTime, formatDuration } from "@/lib/format";
 import { useApiMutation, useApiQuery } from "@/lib/query/hooks";
 import { qk } from "@/lib/query/keys";
+import { humanize } from "@/lib/labels";
+import { useHashFocus } from "@/lib/use-hash-focus";
 import { useNow } from "@/lib/use-now";
 import type { RequestActionProps } from "@/features/request-actions/types";
 import { localDate, localTime, reasonMessages, zonedToUtcIso } from "../lib/tz";
@@ -188,13 +190,14 @@ function Scheduler({ ctx, mode, onDone }: RequestActionProps & { mode: "assign" 
   const winStart = winV.date && winV.from ? zonedToUtcIso(winV.date, winV.from, tz) : null;
   const winEnd = winV.date && winV.to ? zonedToUtcIso(winV.date, winV.to, tz) : null;
   const winValid = Boolean(winStart && winEnd && Date.parse(winEnd) > Date.parse(winStart));
-  const horizon = winEnd && now > 0 ? Math.min(31, Math.max(1, Math.ceil((new Date(winEnd).getTime() - now) / 86_400_000) + 1)) : 14;
-  const sugParams = { horizon_days: horizon, limit: 20 };
+  // Server-side window: only slots inside [earliest start, latest finish] are searched. "Show all" drops it.
+  const windowed = !showAll && winValid && winStart !== null && winEnd !== null;
+  const sugParams: Record<string, string | number> = windowed ? { from: winStart!, to: winEnd!, limit: 20 } : { horizon_days: 14, limit: 20 };
   const sug = useApiQuery<Suggestions>({
     queryKey: (o) => qk.requests.suggestions(o, requestId, sugParams),
     path: `/requests/${requestId}/suggestions`,
     query: sugParams,
-    enabled: requested && view === "suggest",
+    enabled: requested && view === "suggest" && (showAll || winValid),
     staleTime: 0,
   });
 
@@ -220,9 +223,7 @@ function Scheduler({ ctx, mode, onDone }: RequestActionProps & { mode: "assign" 
     },
   );
 
-  const allSlots = sug.data?.suggestions ?? [];
-  const slots = showAll || !winStart || !winEnd || !winValid ? allSlots : allSlots.filter((s) => Date.parse(s.start_at) >= Date.parse(winStart) && Date.parse(s.end_at) <= Date.parse(winEnd));
-  const hiddenCount = (sug.data?.suggestions.length ?? 0) - slots.length;
+  const slots = sug.data?.suggestions ?? [];
 
   function refresh() {
     setStale(null);
@@ -274,14 +275,16 @@ function Scheduler({ ctx, mode, onDone }: RequestActionProps & { mode: "assign" 
             <div>
               <Button
                 onClick={() => {
+                  if (sug.isFetching) return; // keep the button enabled (focus stays put); ignore double clicks
                   setStale(null);
-                  if (requested) void sug.refetch();
+                  setShowAll(false);
+                  if (requested && !showAll) void sug.refetch();
                   setRequested(true);
                 }}
-                loading={sug.isFetching}
+                aria-busy={sug.isFetching || undefined}
                 disabled={!winValid}
               >
-                <RefreshCw className="size-4" aria-hidden /> Suggest slots
+                <RefreshCw className={`size-4 ${sug.isFetching ? "animate-spin" : ""}`} aria-hidden /> Suggest slots
               </Button>
               {!winValid && <span className="ml-3 text-[13px] text-danger-dark">Latest finish must be after earliest start.</span>}
             </div>
@@ -300,16 +303,16 @@ function Scheduler({ ctx, mode, onDone }: RequestActionProps & { mode: "assign" 
                 <EmptyState
                   title="No slots inside this window"
                   description={
-                    hiddenCount > 0
-                      ? `${hiddenCount} suggestion${hiddenCount === 1 ? " exists" : "s exist"} outside the window.`
-                      : `No eligible technician is free. ${sug.data?.unskilled_technicians ?? 0} technician(s) lack the required skills; try Pick manually to see why.`
+                    showAll
+                      ? `No eligible technician is free in the next 14 days. ${sug.data?.unskilled_technicians ?? 0} technician(s) lack the required skills; try Pick manually to see why.`
+                      : `No eligible technician is free inside this window. ${sug.data?.unskilled_technicians ?? 0} technician(s) lack the required skills; try Pick manually to see why.`
                   }
                   action={
-                    hiddenCount > 0 ? (
+                    showAll ? undefined : (
                       <Button variant="secondary" onClick={() => setShowAll(true)}>
                         Show all suggestions
                       </Button>
-                    ) : undefined
+                    )
                   }
                 />
               ) : (
@@ -327,7 +330,7 @@ function Scheduler({ ctx, mode, onDone }: RequestActionProps & { mode: "assign" 
                       />
                     ))}
                   </ul>
-                  {showAll && hiddenCount === 0 && (
+                  {showAll && (
                     <button type="button" className="w-fit text-[13px] font-semibold text-primary-dark underline" onClick={() => setShowAll(false)}>
                       Only show slots inside my window
                     </button>
@@ -394,7 +397,7 @@ function History({ ctx }: RequestActionProps) {
           <li key={a.id} className="flex flex-wrap items-baseline gap-x-3 gap-y-1 border-t border-border py-2 first:border-t-0">
             <span className="font-semibold text-ink">{a.technician.name}</span>
             <span className="text-muted">{windowText(a.start_at, a.end_at, ctx.timezone)}</span>
-            <Badge tone={a.active ? "success" : "neutral"}>{a.active ? "Current" : a.status.charAt(0) + a.status.slice(1).toLowerCase()}</Badge>
+            <Badge tone={a.active ? "success" : "neutral"}>{a.active ? "Current" : humanize(a.status)}</Badge>
             {a.released_reason && (
               <span className="text-muted">
                 Released{a.released_by ? ` by ${a.released_by.name}` : ""}: &ldquo;{a.released_reason}&rdquo;
@@ -421,14 +424,7 @@ export function AssignmentPanel({ ctx }: RequestActionProps) {
   const canUnassign = ctx.allowed.has("unassign");
   const [rescheduling, setRescheduling] = useState(false);
   const [confirm, setConfirm] = useState(false);
-  const ref = useRef<HTMLElement>(null);
-
-  useEffect(() => {
-    if (typeof window !== "undefined" && window.location.hash === "#assign" && ref.current) {
-      ref.current.scrollIntoView({ block: "start" });
-      ref.current.focus();
-    }
-  }, []);
+  useHashFocus("assign");
 
   const unassign = useApiMutation<unknown, { reason: string }>({
     request: (v) => ({ path: `/requests/${ctx.requestId}/assignment/unassign`, body: v }),
@@ -438,8 +434,8 @@ export function AssignmentPanel({ ctx }: RequestActionProps) {
   });
 
   return (
-    <Panel title="Assignment" className="scroll-mt-20" bodyClassName="flex flex-col gap-5">
-      <section id="assign" ref={ref} tabIndex={-1} aria-label="Assignment" className="flex flex-col gap-5 outline-none">
+    <Panel id="assign" title="Assignment" className="scroll-mt-20" bodyClassName="flex flex-col gap-5">
+      <section aria-label="Assignment" className="flex flex-col gap-5">
         {assignment ? (
           <div className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-border bg-canvas p-4">
             <div className="flex flex-col gap-0.5">

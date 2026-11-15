@@ -38,7 +38,9 @@ export function Panel({
   className,
   bodyClassName,
   as: Tag = "section",
+  id,
 }: {
+  id?: string;
   title?: ReactNode;
   actions?: ReactNode;
   children: ReactNode;
@@ -47,7 +49,7 @@ export function Panel({
   as?: "section" | "div" | "aside";
 }) {
   return (
-    <Tag className={cn("rounded-xl border border-border bg-surface shadow-panel", className)}>
+    <Tag id={id} tabIndex={id ? -1 : undefined} className={cn("rounded-xl border border-border bg-surface shadow-panel outline-none", className)}>
       {(title || actions) && (
         <div className="flex flex-wrap items-center justify-between gap-2 border-b border-border px-5 py-3.5">
           {title && <h2 className="font-heading text-base font-bold text-ink">{title}</h2>}

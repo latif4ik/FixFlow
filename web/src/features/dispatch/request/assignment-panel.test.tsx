@@ -48,6 +48,40 @@ describe("Smart Assign panel", () => {
     expect(screen.getByText("Earliest free slot · 6 h booked in the next 7 days")).toBeInTheDocument();
   });
 
+  it("sends the chosen window (org tz -> UTC) as from/to, and 'Show all' calls without them", async () => {
+    const seen: URL[] = [];
+    server.use(
+      http.get(apiUrl("/categories"), () => HttpResponse.json({ items: [CATEGORY_HVAC], total: 1, page: 1, page_size: 100 })),
+      http.get(apiUrl("/requests/r1/assignments"), () => HttpResponse.json([])),
+      http.get(apiUrl("/requests/r1/suggestions"), ({ request }) => {
+        const u = new URL(request.url);
+        seen.push(u);
+        return HttpResponse.json(u.searchParams.has("from") ? { ...suggestions, suggestions: [] } : suggestions);
+      }),
+    );
+    renderWithProviders(<AssignmentPanel ctx={makeCtx()} />);
+    const date = await screen.findByLabelText("Date");
+    await userEvent.clear(date);
+    await userEvent.type(date, "2026-11-18");
+    const start = screen.getByLabelText("Earliest start");
+    await userEvent.clear(start);
+    await userEvent.type(start, "14:00");
+    const end = screen.getByLabelText("Latest finish");
+    await userEvent.clear(end);
+    await userEvent.type(end, "18:00");
+    await userEvent.click(screen.getByRole("button", { name: /Suggest slots/ }));
+    expect(await screen.findByText("No slots inside this window")).toBeInTheDocument();
+    // 14:00-18:00 Asia/Bishkek (UTC+6) = 08:00-12:00Z
+    expect(seen[0]!.searchParams.get("from")).toBe("2026-11-18T08:00:00.000Z");
+    expect(seen[0]!.searchParams.get("to")).toBe("2026-11-18T12:00:00.000Z");
+    expect(seen[0]!.searchParams.has("horizon_days")).toBe(false);
+    await userEvent.click(screen.getByRole("button", { name: "Show all suggestions" }));
+    expect(await screen.findByText("16 Nov, 11:00 - 12:30")).toBeInTheDocument();
+    const last = seen.at(-1)!;
+    expect(last.searchParams.has("from")).toBe(false);
+    expect(last.searchParams.has("to")).toBe(false);
+  });
+
   it("assigns through POST /assignment with an Idempotency-Key and the slot's exact window", async () => {
     baseHandlers();
     let seen: { key: string | null; body: unknown } | null = null;

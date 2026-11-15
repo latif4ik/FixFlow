@@ -1,5 +1,6 @@
 "use client";
 
+import { estimateStatusLabel } from "@/lib/labels";
 import { Check, X } from "lucide-react";
 import { useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
@@ -64,7 +65,7 @@ export function EstimateDecisionPanel({ ctx }: RequestActionProps) {
   return (
     <Panel
       title="Estimate for your approval"
-      actions={<Badge tone={awaiting ? "warning" : "neutral"}>{`Version ${current.version} · ${STATUS_LABEL[current.status] ?? current.status}`}</Badge>}
+      actions={<Badge tone={awaiting ? "warning" : "neutral"}>{`Version ${current.version} · ${STATUS_LABEL[current.status] ?? estimateStatusLabel(current.status)}`}</Badge>}
     >
       <p className="mb-3 text-[13px] text-muted">This is an estimate of the cost, not a payment or an invoice. Nothing is charged by approving it.</p>
       <ul className="divide-y divide-border text-sm" aria-label="Estimate lines">
@@ -113,7 +114,7 @@ export function EstimateDecisionPanel({ ctx }: RequestActionProps) {
         </div>
       ) : (
         <div className="mt-4">
-          <InlineNote>{`This estimate is ${(STATUS_LABEL[current.status] ?? current.status).toLowerCase()}.`}</InlineNote>
+          <InlineNote>{`This estimate is ${(STATUS_LABEL[current.status] ?? estimateStatusLabel(current.status)).toLowerCase()}.`}</InlineNote>
         </div>
       )}
 
@@ -125,7 +126,7 @@ export function EstimateDecisionPanel({ ctx }: RequestActionProps) {
               <li key={e.id} className="rounded-md border border-border px-3 py-2">
                 <div className="flex flex-wrap items-center justify-between gap-2">
                   <span className="font-semibold">Version {e.version}</span>
-                  <Badge tone="neutral">{STATUS_LABEL[e.status] ?? e.status}</Badge>
+                  <Badge tone="neutral">{STATUS_LABEL[e.status] ?? estimateStatusLabel(e.status)}</Badge>
                 </div>
                 <div className="mt-1 text-[13px] text-muted">
                   <Money minor={e.total_minor} currency={e.currency} />

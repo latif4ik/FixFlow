@@ -317,3 +317,65 @@ def test_performance_eight_technicians_fourteen_days(client, db, sw, hd):
     assert r.status_code == 200 and len(r.json()["suggestions"]) == 16
     assert elapsed < 3.0, elapsed
     assert db.query(Assignment).count() >= 40
+
+
+def win(base: datetime, h0: int, h1: int, days: int = 0) -> dict[str, str]:
+    return {
+        "from": at(base, days, h0).isoformat().replace("+00:00", "Z"),
+        "to": at(base, days, h1).isoformat().replace("+00:00", "Z"),
+    }
+
+
+def test_window_params_respected_and_later_than_global_earliest(
+    client, db, sw, hd, one_tech, monkeypatch
+):
+    """The REQ-14 bug: free 15:00-18:00 must be found inside a 14:00-18:00 window."""
+    base = future_monday(9, 0)
+    patch_clock(monkeypatch, at(base, -3, 17, 7))
+    day = at(base, 1, 9)  # Tuesday
+    for h0, h1 in ((9, 12), (12, 15)):  # busy 09-15; adjacency keeps 15:00 usable
+        r = assign(client, hd, triaged(db, sw.w), one_tech, at(day, 0, h0), at(day, 0, h1))
+        assert r.status_code == 201, r.text
+    req = triaged(db, sw.w)
+    global_first = sug(client, hd, req).json()["suggestions"][0]
+    assert (
+        local(global_first["start_at"]).strftime("%a %H:%M") == "Mon 09:00"
+    )  # unwindowed search starts Monday
+    body = sug(client, hd, req, duration_minutes=60, limit=20, **win(day, 14, 18)).json()
+    starts = [local(x["start_at"]).strftime("%H:%M") for x in body["suggestions"]]
+    assert starts[0] == "15:00"
+    for x in body["suggestions"]:  # strictly inside the window, ends by 18:00
+        assert at(day, 0, 14) <= datetime.fromisoformat(x["start_at"])
+        assert datetime.fromisoformat(x["end_at"]) <= at(day, 0, 18)
+    assert body["horizon"]["to"].startswith(at(day, 0, 18).strftime("%Y-%m-%dT%H:%M"))
+
+
+def test_window_in_the_past_is_clipped_to_now_and_tight_window_is_empty(
+    client, db, sw, hd, one_tech, monkeypatch
+):
+    base = future_monday(9, 0)
+    patch_clock(monkeypatch, at(base, 0, 12, 7))
+    req = triaged(db, sw.w)
+    body = sug(client, hd, req, **win(base, 9, 15)).json()
+    assert local(body["suggestions"][0]["start_at"]).strftime("%H:%M") == "12:15"
+    assert local(body["horizon"]["from"]).strftime("%H:%M") == "12:15"
+    # 60 min needed, only 45 left in the window
+    tight = sug(client, hd, req, **win(base, 12, 13)).json()
+    assert tight["suggestions"] == []
+
+
+def test_window_validation_422(client, db, sw, hd, one_tech):
+    req = triaged(db, sw.w)
+    t = datetime(2030, 1, 7, 8, 0, tzinfo=UTC)
+    iso = lambda d: d.isoformat().replace("+00:00", "Z")  # noqa: E731
+    cases = [
+        {"from": iso(t), "to": iso(t)},
+        {"from": iso(t), "to": iso(t - timedelta(hours=1))},
+        {"from": iso(t), "to": iso(t + timedelta(days=31, minutes=1))},
+        {"to": iso(t)},  # far future relative to now: > 31 days
+    ]
+    for bad in cases:
+        r = sug(client, hd, req, **bad)
+        assert r.status_code == 422, bad
+    ok = sug(client, hd, req, **{"from": iso(t), "to": iso(t + timedelta(days=31))})
+    assert ok.status_code == 200

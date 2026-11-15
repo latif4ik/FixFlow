@@ -1,5 +1,7 @@
 "use client";
 
+import { useHashFocus } from "@/lib/use-hash-focus";
+import { requestStatusText } from "@/lib/labels";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { ClipboardCheck, Copy, Search } from "lucide-react";
 import { useState } from "react";
@@ -90,14 +92,25 @@ function EditCategoryPriority({ ctx }: RequestActionProps) {
     >
       <FormServerError form={form} />
       <FormField label="Category" error={errs.category_id?.message}>
-        <Select {...form.register("category_id")}>
-          {!cats.data && <option value={detail.category.id}>{detail.category.name}</option>}
-          {cats.data?.items.map((c) => (
-            <option key={c.id} value={c.id}>
-              {c.name}
-            </option>
-          ))}
-        </Select>
+        {/* Render the select only once the list is loaded: swapping options under an
+            uncontrolled <select> makes the browser show the first option while the form
+            still holds the original value. Keep the current category even if disabled. */}
+        {cats.data ? (
+          <Select {...form.register("category_id")} defaultValue={detail.category.id}>
+            {!cats.data.items.some((c) => c.id === detail.category.id) && (
+              <option value={detail.category.id}>{detail.category.name}</option>
+            )}
+            {cats.data.items.map((c) => (
+              <option key={c.id} value={c.id}>
+                {c.name}
+              </option>
+            ))}
+          </Select>
+        ) : (
+          <Select disabled aria-busy="true" value={detail.category.id} onChange={() => {}}>
+            <option value={detail.category.id}>{detail.category.name}</option>
+          </Select>
+        )}
       </FormField>
       <FormField label="Priority" error={errs.priority?.message}>
         <Select {...form.register("priority")}>
@@ -249,13 +262,14 @@ function Section({ title, children }: { title: string; children: React.ReactNode
 
 /** Sidebar: triage (mark triaged, category/priority with reason, duplicates, triage note). */
 export function TriagePanel({ ctx }: RequestActionProps) {
+  useHashFocus("triage");
   const { detail, allowed } = ctx;
   const canTriage = allowed.has("triage");
   const canEdit = allowed.has("edit_priority_category");
   const canDup = allowed.has("link_duplicate");
   const canNote = allowed.has("add_note");
   return (
-    <Panel title="Triage" bodyClassName="flex flex-col gap-4">
+    <Panel id="triage" title="Triage" className="scroll-mt-20" bodyClassName="flex flex-col gap-4">
       <div className="flex flex-wrap items-center gap-2 text-sm">
         {detail.status === "SUBMITTED" ? (
           <Badge tone="warning">Waiting for triage</Badge>
@@ -275,7 +289,7 @@ export function TriagePanel({ ctx }: RequestActionProps) {
           <MarkTriaged ctx={ctx} />
         </Section>
       ) : (
-        detail.status !== "SUBMITTED" && <p className="text-[13px] text-muted">Triage is only available while a request is Submitted. It is now {detail.status.toLowerCase().replaceAll("_", " ")}.</p>
+        detail.status !== "SUBMITTED" && <p className="text-[13px] text-muted">Triage is only available while a request is Submitted. It is now {requestStatusText(detail.status)}.</p>
       )}
       {canEdit && (
         <Section title="Category and priority">

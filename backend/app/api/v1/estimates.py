@@ -16,6 +16,7 @@ from app.schemas.estimates import (
     DecisionIn,
     EstimateCreate,
     EstimateLinesPut,
+    EstimateListItem,
     EstimateOut,
     EstimatePatch,
     WithdrawIn,
@@ -81,7 +82,7 @@ def request_estimates(request_id: uuid.UUID, db: DbDep, ctx: CurrentCtx) -> list
     return svc.list_for_request(db, ctx, request_id)
 
 
-@router.get("/estimates", response_model=Page[EstimateOut])
+@router.get("/estimates", response_model=Page[EstimateListItem])
 def list_estimates(
     db: DbDep,
     ctx: StaffCtx,

@@ -52,7 +52,7 @@ export function Forbidden({ role }: { role: Role | null }) {
  * The (app) layout already wraps every page with `rolesForPath(pathname)`; use this directly for extra, narrower gates.
  */
 export function RouteGuard({ roles, children }: { roles?: readonly Role[]; children: ReactNode }) {
-  const { status, role, orgId } = useAuth();
+  const { status, role, orgId, signedOut } = useAuth();
   const router = useRouter();
   const pathname = usePathname();
 
@@ -60,9 +60,9 @@ export function RouteGuard({ roles, children }: { roles?: readonly Role[]; child
   const needsOrg = status === "authenticated" && !orgId;
 
   useEffect(() => {
-    if (needsLogin) router.replace(`/login?next=${encodeURIComponent(pathname)}`);
+    if (needsLogin) router.replace(signedOut ? "/login" : `/login?next=${encodeURIComponent(pathname)}`);
     else if (needsOrg) router.replace(`/select-org?next=${encodeURIComponent(pathname)}`);
-  }, [needsLogin, needsOrg, router, pathname]);
+  }, [needsLogin, needsOrg, signedOut, router, pathname]);
 
   if (status === "expired") return <SessionExpired next={pathname} />;
   if (status === "loading" || needsLogin || needsOrg) return <LoadingState label="Checking your session" />;

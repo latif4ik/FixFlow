@@ -4,11 +4,12 @@ import Link from "next/link";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { Badge, DataTable, DateTime, EmptyState, FilterBar, FormField, Money, PageHeader, Select } from "@/components/ui";
 import type { Column } from "@/components/ui";
-import type { Page, RequestListItem, Schemas } from "@/lib/api/types";
+import type { Page, Schemas } from "@/lib/api/types";
+import { estimateStatusLabel } from "@/lib/labels";
 import { useApiQuery } from "@/lib/query/hooks";
 import { qk } from "@/lib/query/keys";
 
-type Estimate = Schemas["EstimateOut"];
+type Estimate = Schemas["EstimateListItem"];
 const PAGE_SIZE = 20;
 const STATUSES: { value: Estimate["status"]; label: string; tone: "neutral" | "warning" | "success" | "danger" }[] = [
   { value: "DRAFT", label: "Draft", tone: "neutral" },
@@ -26,10 +27,6 @@ export function EstimatesPage() {
   const page = Math.max(1, Number(sp.get("page") ?? "1") || 1);
   const params = { status: status || undefined, page, page_size: PAGE_SIZE };
   const q = useApiQuery<Page<Estimate>>({ queryKey: (o) => qk.estimates.list(o, params), path: "/estimates", query: params, placeholderData: (p) => p });
-  // The estimates API only returns the request id; resolve REQ-numbers from the newest requests when possible.
-  const reqs = useApiQuery<Page<RequestListItem>>({ queryKey: (o) => qk.requests.list(o, { page_size: 100, purpose: "estimate-labels" }), path: "/requests", query: { page_size: 100 }, staleTime: 60_000 });
-  const label = new Map((reqs.data?.items ?? []).map((r) => [r.id, r.display_id]));
-
   function go(next: { status?: string; page?: number }) {
     const n = new URLSearchParams();
     const s = next.status ?? status;
@@ -46,7 +43,8 @@ export function EstimatesPage() {
       header: "Request",
       cell: (e) => (
         <Link href={`/requests/${e.request_id}`} className="font-semibold text-primary-dark hover:underline">
-          {label.get(e.request_id) ?? "Open request"}
+          {e.request ? e.request.display_id : "Open request"}
+          {e.request && <span className="font-normal text-ink"> · {e.request.title}</span>}
         </Link>
       ),
     },
@@ -55,8 +53,8 @@ export function EstimatesPage() {
       key: "status",
       header: "Status",
       cell: (e) => {
-        const m = STATUSES.find((s) => s.value === e.status)!;
-        return <Badge tone={m.tone}>{m.label}</Badge>;
+        const m = STATUSES.find((s) => s.value === e.status);
+        return <Badge tone={m?.tone ?? "neutral"}>{m?.label ?? estimateStatusLabel(e.status)}</Badge>;
       },
     },
     { key: "total", header: "Total", className: "text-right", cell: (e) => <Money minor={e.total_minor} currency={e.currency} /> },

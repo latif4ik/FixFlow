@@ -28,7 +28,9 @@ from app.models.requests import ServiceRequest
 from app.schemas.estimates import (
     EstimateLineIn,
     EstimateLineOut,
+    EstimateListItem,
     EstimateOut,
+    EstimateRequestBrief,
     EstimateSummary,
 )
 from app.schemas.requests import PersonBrief
@@ -646,7 +648,7 @@ def list_all(
     params: PageParams,
     status: list[EstimateStatus] | None,
     request_id: uuid.UUID | None,
-) -> tuple[list[EstimateOut], int]:
+) -> tuple[list[EstimateListItem], int]:
     _require_staff(ctx)
     stmt = select(Estimate).where(Estimate.organization_id == ctx.org_id)
     if status:
@@ -654,4 +656,16 @@ def list_all(
     if request_id:
         stmt = stmt.where(Estimate.request_id == request_id)
     rows, total = paginate_rows(db, stmt.order_by(Estimate.created_at.desc(), Estimate.id), params)
-    return build_out(db, ctx, [r[0] for r in rows]), total
+    outs = build_out(db, ctx, [r[0] for r in rows])
+    ids = {o.request_id for o in outs}
+    briefs: dict[uuid.UUID, EstimateRequestBrief] = {}
+    if ids:  # one batched query, no N+1
+        for rid, number, title in db.execute(
+            select(ServiceRequest.id, ServiceRequest.number, ServiceRequest.title).where(
+                ServiceRequest.organization_id == ctx.org_id, ServiceRequest.id.in_(ids)
+            )
+        ):
+            briefs[rid] = EstimateRequestBrief(id=rid, display_id=f"REQ-{number}", title=title)
+    return [
+        EstimateListItem(**o.model_dump(), request=briefs.get(o.request_id)) for o in outs
+    ], total

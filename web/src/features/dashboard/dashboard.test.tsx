@@ -111,4 +111,29 @@ describe("dashboard", () => {
     expect(mockRouter.replace).toHaveBeenCalledWith(expect.stringContaining("technician_id=t1"));
     expect(mockRouter.replace).toHaveBeenCalledWith(expect.stringContaining("category_id=c1"));
   });
+
+  it("offers Triage (not Smart assign) for SUBMITTED overdue requests and shows property, technician and appointment", async () => {
+    seed();
+    const tech = { membership_id: "t1", name: "Tech One" };
+    server.use(
+      http.get(apiUrl("/dashboard/overdue"), () =>
+        HttpResponse.json({
+          count: 2,
+          page: 1,
+          page_size: 3,
+          items: [
+            overdueItem("r41", 41, "SUBMITTED"),
+            { ...overdueItem("r44", 44, "SCHEDULED"), technician: tech, appointment: { start_at: "2026-11-18T08:00:00Z", end_at: "2026-11-18T09:00:00Z" } },
+          ],
+        }),
+      ),
+    );
+    renderWithProviders(<DashboardPage />, { session: fakeSession({ role: "DISPATCHER" }) });
+    const triage = await screen.findByRole("link", { name: /Triage REQ-41/ });
+    expect(triage).toHaveAttribute("href", "/requests/r41#triage");
+    expect(screen.queryByRole("link", { name: /Smart assign REQ-41/ })).not.toBeInTheDocument();
+    expect(screen.getByText(/Orion Clinic · Unassigned/)).toBeInTheDocument();
+    expect(screen.getByText(/Orion Clinic · Tech One/)).toBeInTheDocument();
+    expect(screen.getByText(/18 Nov, 14:00/)).toBeInTheDocument();
+  });
 });

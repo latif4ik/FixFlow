@@ -137,21 +137,24 @@ function DayRow({ t, date, tz, start, span, hours }: { t: Tech; date: string; tz
   );
 }
 
+/** One template for the header and EVERY technician row, so day columns line up regardless of stacked blocks. */
+export const WEEK_GRID = "160px repeat(7, minmax(140px, 1fr))";
+
 function WeekBoard({ data, monday, tz }: { data: Schedule; monday: string; tz: string }) {
   const days = weekDates(monday);
   return (
     <div role="region" aria-label="Week schedule" tabIndex={0} className="overflow-x-auto rounded-xl border border-border bg-surface shadow-panel">
       <div style={{ minWidth: 160 + 7 * 150 }}>
-        <div className="flex border-b border-border bg-canvas text-xs font-semibold text-muted">
+        <div data-week-row="header" className="grid border-b border-border bg-canvas text-xs font-semibold text-muted" style={{ gridTemplateColumns: WEEK_GRID }}>
           <div className={`${ROW_LABEL} h-9 bg-canvas`}>Technician</div>
           {days.map((d) => (
-            <div key={d} className="flex h-9 flex-1 items-center border-l border-border px-2">
+            <div key={d} className="flex h-9 min-w-0 items-center border-l border-border px-2">
               {weekdayShort(d)} {dayMonthLabel(d)}
             </div>
           ))}
         </div>
         {data.technicians.map((t) => (
-          <div key={t.membership_id} className="flex border-b border-border last:border-0">
+          <div key={t.membership_id} data-week-row="tech" className="grid border-b border-border last:border-0" style={{ gridTemplateColumns: WEEK_GRID }}>
             <div className={ROW_LABEL}>
               <span className="truncate text-sm font-semibold text-ink">{t.name.replace(/ \(.*\)$/, "")}</span>
             </div>
@@ -165,7 +168,7 @@ function WeekBoard({ data, monday, tz }: { data: Schedule; monday: string; tz: s
                   data-day={d}
                   role="group"
                   aria-label={`${t.name} on ${dayMonthLabel(d)}${off ? ", time off" : free ? "" : ", not available"}`}
-                  className={`flex min-h-20 flex-1 flex-col gap-1 border-l border-border p-1 ${free && !off ? "bg-surface" : "bg-canvas-2"}`}
+                  className={`flex min-h-20 min-w-0 flex-col gap-1 border-l border-border p-1 ${free && !off ? "bg-surface" : "bg-canvas-2"}`}
                   style={off ? { backgroundImage: HATCH } : undefined}
                 >
                   {off && <span className="w-fit rounded-sm bg-surface/90 px-1 text-[11px] font-semibold text-muted">Time off</span>}
