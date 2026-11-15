@@ -37,3 +37,7 @@ uploads/
 .DS_Store
 .idea/
 .vscode/
+
+# Claude Code worktrees/local state and Next.js auto-generated agent file
+.claude/
+web/AGENTS.md
