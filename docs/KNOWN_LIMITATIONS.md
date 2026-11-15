@@ -48,7 +48,7 @@ repository. Test names refer to files under `backend/tests/`; "run" commands ass
   non-local hosts and `ENVIRONMENT=production`).
 - `scripts/smoke.sh` and `scripts/simulate_race.py` write real data to the running database (scratch requests,
   stock top-ups). They clean up what they can but are for the development database only.
-- The Android debug APK is about 170 MB and needs Flutter 3.47.9, Android SDK 36 and Java 21 to build. Tested on the
+- The Android debug APK is about 220 MB and needs Flutter 3.47.9, Android SDK 36 and Java 21 to build. Tested on the
   `Medium_Phone` emulator (API URL `http://10.0.2.2:8000`); a physical device is supported by setting the server URL in the
   app but was not tested on real hardware in this submission.
 - Tooling note: `mobile/pubspec.yaml` overrides `path_provider_foundation` to avoid a macOS SDK linking issue on
