@@ -2,6 +2,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../core/providers.dart';
 import 'caching_jobs_repository.dart';
+import 'job_actions_repository.dart';
 import 'job_models.dart';
 import 'jobs_repository.dart';
 
@@ -144,3 +145,28 @@ final jobDetailProvider = FutureProvider.autoDispose.family<JobDetail, String>((
   });
   return ref.read(jobsRepositoryProvider).getJob(requestId);
 });
+
+/// Online-only actions (accept/decline/start/block/resume/complete/materials).
+final jobActionsRepositoryProvider = Provider<JobActionsRepository>(
+  (ref) => ApiJobActionsRepository(ref.watch(apiClientProvider)),
+);
+
+/// Active inventory for the material picker; org-scoped, fetched on demand.
+final inventoryProvider = FutureProvider.autoDispose<List<InventoryItem>>((
+  ref,
+) {
+  ref.watch(selectedOrgIdProvider);
+  return ref.read(jobActionsRepositoryProvider).inventory();
+});
+
+/// Refetches everything a mutation or an app resume can change.
+void refreshJobData(
+  WidgetRef ref,
+  String requestId, {
+  bool includeDetail = true,
+}) {
+  if (includeDetail) ref.invalidate(jobDetailProvider(requestId));
+  for (final s in AssignmentScope.values) {
+    ref.invalidate(inboxProviderFor(s));
+  }
+}

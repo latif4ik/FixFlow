@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
@@ -11,9 +13,14 @@ import 'features/auth/sign_in_screen.dart';
 import 'features/jobs/inbox_screen.dart';
 import 'features/jobs/job_detail_screen.dart';
 import 'features/jobs/job_models.dart';
+import 'features/jobs/jobs_providers.dart';
 import 'features/org/org_screens.dart';
 import 'features/outbox/outbox_providers.dart';
 import 'features/outbox/outbox_screen.dart';
+import 'features/notifications/notifications_providers.dart';
+import 'features/notifications/notifications_screen.dart';
+import 'features/profile/availability.dart';
+import 'features/profile/availability_screen.dart';
 import 'features/profile/profile_screen.dart';
 
 /// Pure redirect rule (unit-tested). Returns null to stay on [location].
@@ -73,19 +80,81 @@ final routerProvider = Provider<GoRouter>((ref) {
       ),
       GoRoute(path: '/outbox', builder: (_, _) => const OutboxScreen()),
       GoRoute(path: '/profile', builder: (_, _) => const ProfileScreen()),
+      GoRoute(
+        path: '/notifications',
+        builder: (_, _) => const NotificationsScreen(),
+      ),
+      GoRoute(
+        path: '/availability',
+        builder: (_, _) => const AvailabilityScreen(),
+      ),
     ],
   );
   ref.onDispose(router.dispose);
   return router;
 });
 
-class FixFlowApp extends ConsumerWidget {
+class FixFlowApp extends ConsumerStatefulWidget {
   const FixFlowApp({super.key});
 
   @override
-  Widget build(BuildContext context, WidgetRef ref) {
+  ConsumerState<FixFlowApp> createState() => _FixFlowAppState();
+}
+
+class _FixFlowAppState extends ConsumerState<FixFlowApp>
+    with WidgetsBindingObserver {
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addObserver(this);
+  }
+
+  Timer? _probe;
+
+  /// While the last request failed although the device has a network, probe
+  /// the server every 15 s so the app leaves "offline" by itself.
+  void _updateProbe() {
+    final needed =
+        !ref.read(simulateOfflineProvider) &&
+        (ref.read(connectivityProvider).asData?.value ?? true) &&
+        !ref.read(networkReachableProvider);
+    if (!needed) {
+      _probe?.cancel();
+      _probe = null;
+    } else {
+      _probe ??= Timer.periodic(const Duration(seconds: 15), (_) {
+        if (mounted) probeServer(ref);
+      });
+    }
+  }
+
+  @override
+  void dispose() {
+    _probe?.cancel();
+    WidgetsBinding.instance.removeObserver(this);
+    super.dispose();
+  }
+
+  /// App back in the foreground: refetch what the technician looks at.
+  /// (Outbox sync has its own triggers, see `SyncController`.)
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state != AppLifecycleState.resumed) return;
+    if (ref.read(sessionProvider).status != SessionStatus.signedIn) return;
+    for (final s in AssignmentScope.values) {
+      ref.invalidate(inboxProviderFor(s));
+    }
+    ref.invalidate(jobDetailProvider);
+    ref.invalidate(unreadCountProvider);
+    ref.invalidate(notificationsProvider);
+    ref.invalidate(technicianProfileProvider);
+  }
+
+  @override
+  Widget build(BuildContext context) {
     // Starts the outbox sync engine (app start, reconnect, timer).
     ref.watch(syncControllerProvider);
+    ref.listen(networkReachableProvider, (_, _) => _updateProbe());
     return MaterialApp.router(
       title: AppConfig.appName,
       theme: buildAppTheme(),

@@ -20,13 +20,27 @@ Technician app for FixFlow. See `ARCHITECTURE_NOTES.md` for the design.
 ## Commands (run from `mobile/`)
 ```
 flutter pub get
-dart format --output=none --set-exit-if-changed lib test
+dart format --output=none --set-exit-if-changed lib test integration_test
 flutter analyze
 flutter test
 flutter build apk --debug          # -> build/app/outputs/flutter-apk/app-debug.apk
 dart run build_runner build --delete-conflicting-outputs   # only after changing lib/core/db/tables.dart
 LIVE_API_URL=http://localhost:8000 flutter test test/live   # real-backend offline-queue test (writes demo data)
 ```
+Integration test (ON the emulator, live backend; writes demo data, run `reset-demo` before and after):
+```
+emulator -avd Medium_Phone -no-snapshot-save -no-audio &   # wait for adb wait-for-device + sys.boot_completed
+flutter test integration_test -d emulator-5554
+docker compose exec -T backend python -m app.cli reset-demo --yes-destroy-local-data   # from abdulatif-imarov/
+```
+It signs in as technician1, accepts/starts "Replace burnt-out corridor lights", adds a note, records a material,
+goes offline (dev switch), queues a note, syncs it, completes with an injected photo, and verifies the server state.
+`SHOT:<name>` lines in its output mark screenshot points (`adb exec-out screencap -p > file.png`).
+
+Emulator vs physical device: the emulator reaches the host at `http://10.0.2.2:8000` (default). A physical device
+needs `--dart-define=API_BASE_URL=http://<LAN-IP>:8000` at build time or the in-app Server setting on the sign-in
+screen. Backend CORS is not involved (native HTTP client).
+
 Install on a running emulator/device: `adb install -r build/app/outputs/flutter-apk/app-debug.apk`.
 
 ## Demo technician accounts (password `demo1234`, disposable)

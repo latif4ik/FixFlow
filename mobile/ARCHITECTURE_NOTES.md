@@ -68,12 +68,24 @@ Regenerate with `dart run build_runner build --delete-conflicting-outputs` and c
 - Tests: `test/outbox_test.dart`, `caching_and_migration_test.dart`, `outbox_ui_test.dart`, `sync_controller_test.dart`;
   live (needs backend): `LIVE_API_URL=http://localhost:8000 flutter test test/live` (writes demo data; run `reset-demo` after).
 
-## Extension points for M3
-- `features/jobs/job_actions.dart` -> `JobActionsSection` (clearly marked): replace the read-only list with
-  controls driven by `JobDetail.allowedActions`; keep `actionLabel` for labels.
-- Notifications screen/route: add a `GoRoute` in `app.dart` and an icon in `InboxScreen` app bar.
-- After a successful mutation `ref.invalidate(jobDetailProvider(id))` and the inbox providers
-  (`inboxProviderFor(scope)`).
+## Technician actions, materials, notifications (M3)
+- `features/jobs/job_actions.dart` `JobActionsSection`: buttons from `allowed_actions` (accept, start, resume, complete, block, decline,
+  add_note). Every online-only button is wrapped in `RequiresConnection`; one action in flight at a time (double-tap safe); UI changes only
+  after a 2xx, errors show a dialog with the server message (`actionErrorMessage`), then `refreshJobData` (detail + inbox providers).
+  Decline/block/resume ask for a reason/note (>= 5 chars). Start disabled with `start_blocked_reason` (inbox item) when the estimate is not approved.
+- `complete_job_screen.dart`: note >= 20 chars (live counter) + >= 1 photo (jpeg/png/webp <= 10 MiB, validated before upload). Each photo uploads as
+  COMPLETION with its own `client_command_id` kept until success (retry replays, never duplicates), then POST /complete. A failed complete keeps
+  uploaded photos (they are attached server-side) and says so. `PhotoPicker` seam (`photoPickerProvider`) lets tests/integration inject files.
+- `job_materials.dart`: usage list + "Record material" sheet (IN_PROGRESS + `complete` allowed). `client_command_id` generated when the sheet opens;
+  after a timeout the inputs lock and Retry resends the identical payload; a definitive 4xx rotates the id. `insufficient_stock` shows `available`.
+- `job_actions_repository.dart` (`jobActionsRepositoryProvider`): the only place that calls the mutating endpoints.
+- `features/notifications/`: repository, `unreadCountProvider`, list screen (`/notifications`), `NotificationsBell` (badge; owns the 60 s poll timer,
+  skipped while backgrounded / radio down / dev-offline). `features/profile/availability*.dart`: read-only `/technicians/me` (`/availability`).
+- Lifecycle: `FixFlowApp` observes resume and invalidates inbox, job details, unread count, notifications, availability. While the last request failed
+  but the radio is up, a 15 s probe (`probeServer`, GET /health/live) and a banner "Retry" let the app leave "offline" by itself.
+- Cache fix found on-device: pruning a scope no longer deletes a row that has cached detail (job moved ACCEPTED -> IN_PROGRESS must still open offline);
+  only its list entry (`item_json`) is cleared.
+- Tests: `test/m3_*_test.dart` (support: `test/support/m3_*.dart`; real file IO in widget tests needs `settleIo`), `integration_test/app_flow_test.dart`.
 
 ## Conventions
 - Single quotes, `dart format`, `flutter analyze` clean. No tokens/PII in logs.

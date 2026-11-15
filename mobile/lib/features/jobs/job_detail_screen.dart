@@ -11,6 +11,7 @@ import '../../core/widgets/stale_banner.dart';
 import '../../core/widgets/state_views.dart';
 import '../outbox/outbox_widgets.dart';
 import 'job_actions.dart';
+import 'job_materials.dart';
 import 'job_models.dart';
 import 'jobs_providers.dart';
 
@@ -166,22 +167,13 @@ class JobDetailView extends StatelessWidget {
           children: [Text(job.description.isEmpty ? '-' : job.description)],
         ),
         if (e != null) ...[gap, _EstimateCard(e)],
-        if (job.materials.isNotEmpty) ...[
-          gap,
-          SectionCard(
-            title: 'Materials used',
-            children: [
-              for (final m in job.materials)
-                KeyValueRow(
-                  m.name,
-                  '${m.quantity} · ${formatMoney(m.totalCostMinor, m.currency)}',
-                ),
-            ],
-          ),
-        ],
         gap,
-        // M3: this section becomes the interactive actions area.
-        JobActionsSection(job: job, actions: job.allowedActions),
+        JobMaterialsSection(job: job),
+        JobActionsSection(
+          job: job,
+          actions: job.allowedActions,
+          startBlockedReason: blocked,
+        ),
         gap,
         JobNotesSection(
           requestId: job.id,

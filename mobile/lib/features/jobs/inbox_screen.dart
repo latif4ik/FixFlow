@@ -5,6 +5,7 @@ import 'package:go_router/go_router.dart';
 import '../../core/providers.dart';
 import '../../core/widgets/stale_banner.dart';
 import '../../core/widgets/state_views.dart';
+import '../notifications/notifications_screen.dart';
 import '../outbox/outbox_screen.dart';
 import 'assignment_card.dart';
 import 'job_models.dart';
@@ -35,6 +36,7 @@ class InboxScreen extends ConsumerWidget {
             ],
           ),
           actions: [
+            NotificationsBell(onPressed: () => context.push('/notifications')),
             OutboxAction(onPressed: () => context.push('/outbox')),
             IconButton(
               tooltip: 'Profile',

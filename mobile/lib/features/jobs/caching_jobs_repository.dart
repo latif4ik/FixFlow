@@ -92,15 +92,22 @@ class CachingJobsRepository implements JobsRepository {
     final now = _now().toUtc();
     await _db.transaction(() async {
       if (page == 1 && result.items.length >= result.total) {
-        // Complete listing: drop rows of this scope that are gone.
+        // Complete listing: forget rows of this scope that are gone. A job
+        // that merely moved to another scope (ACCEPTED -> IN_PROGRESS) keeps
+        // its cached DETAIL (so it still opens offline); only its list entry
+        // is dropped. A job that is really gone is evicted by the 403/404 on
+        // its next online detail fetch.
         final keep = [for (final i in result.items) i.requestId];
-        await (_db.delete(_db.cachedJobs)..where(
-              (t) =>
-                  t.orgId.equals(org) &
-                  t.scope.equals(scope.name) &
-                  t.requestId.isNotIn(keep),
-            ))
-            .go();
+        Expression<bool> gone($CachedJobsTable t) =>
+            t.orgId.equals(org) &
+            t.scope.equals(scope.name) &
+            t.requestId.isNotIn(keep);
+        await (_db.delete(
+          _db.cachedJobs,
+        )..where((t) => gone(t) & t.detailJson.isNull())).go();
+        await (_db.update(_db.cachedJobs)
+              ..where((t) => gone(t) & t.detailJson.isNotNull()))
+            .write(const CachedJobsCompanion(itemJson: Value(null)));
       }
       for (final item in result.items) {
         final raw = item.raw;

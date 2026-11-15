@@ -44,6 +44,17 @@ class ProfileScreen extends ConsumerWidget {
           ),
           const SizedBox(height: 12),
           SectionCard(
+            title: 'Schedule',
+            children: [
+              OutlinedButton.icon(
+                onPressed: () => context.push('/availability'),
+                icon: const Icon(Icons.event_available_outlined),
+                label: const Text('My availability'),
+              ),
+            ],
+          ),
+          const SizedBox(height: 12),
+          SectionCard(
             title: 'Server',
             children: [
               KeyValueRow('API address', ref.watch(serverUrlProvider)),

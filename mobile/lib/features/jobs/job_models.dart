@@ -299,7 +299,11 @@ class MaterialUsage {
     required this.quantity,
     required this.totalCostMinor,
     required this.currency,
+    this.code = '',
+    this.unit = '',
   });
+  final String code;
+  final String unit;
   final String name;
   final String quantity;
   final int totalCostMinor;
@@ -382,6 +386,8 @@ class JobDetail {
         for (final m in (j['materials'] as List? ?? const []))
           MaterialUsage(
             name: (_map(m['item'])?['name'] ?? 'Material') as String,
+            code: (_map(m['item'])?['code'] ?? '') as String,
+            unit: (_map(m['item'])?['unit'] ?? '') as String,
             quantity: (m['quantity'] ?? '').toString(),
             totalCostMinor: (m['total_cost_minor'] as num?)?.toInt() ?? 0,
             currency: (m['currency'] ?? 'KGS') as String,

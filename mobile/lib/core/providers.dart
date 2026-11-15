@@ -151,3 +151,16 @@ final apiClientProvider = Provider<ApiClient>((ref) {
 final authRepositoryProvider = Provider<AuthRepository>(
   (ref) => AuthRepository(ref.watch(apiClientProvider)),
 );
+
+/// Cheap unauthenticated request that tells the app the server is reachable
+/// again: any HTTP answer flips `networkReachableProvider` back to true (via
+/// the error/response interceptor). Never throws.
+Future<void> probeServer(WidgetRef ref) => _probe(ref.read(apiClientProvider));
+
+Future<void> _probe(ApiClient api) async {
+  try {
+    await api.getJson('/health/live');
+  } catch (_) {
+    // Still unreachable: the interceptor already recorded that.
+  }
+}
