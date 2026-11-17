@@ -1,7 +1,5 @@
 # FixFlow: field service operations platform
 
-Demo video: https://youtu.be/AOxqhTyK03I
-
 FixFlow is a multi-organization service operations platform for building maintenance, equipment repair and on-site field
 work. Requesters submit work, dispatchers triage and schedule it, technicians execute it, and admins configure and
 audit it. Organizations are fully isolated from each other. One person can belong to several organizations with a
